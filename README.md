@@ -112,6 +112,10 @@ Benchmarks compare `CsvToolkit` with `CsvHelper` for:
 - Typed write
 - Semicolon + high quoting parse
 
+Performance design notes:
+
+- [Performance Design Decisions](docs/performance-design-decisions.md)
+
 Run all benchmarks non-interactively:
 
 ```bash
