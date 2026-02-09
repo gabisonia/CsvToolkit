@@ -1,4 +1,5 @@
 using CsvToolkit.Internal;
+using System.Runtime.CompilerServices;
 
 namespace CsvToolkit;
 
@@ -25,12 +26,14 @@ public readonly struct CsvRow
 
     public ReadOnlySpan<char> this[int index] => GetFieldSpan(index);
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ReadOnlySpan<char> GetFieldSpan(int index)
     {
         var memory = GetFieldMemory(index);
         return memory.Span;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ReadOnlyMemory<char> GetFieldMemory(int index)
     {
         EnsureIndex(index);
@@ -43,6 +46,7 @@ public readonly struct CsvRow
         return GetFieldMemory(index).ToString();
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void EnsureIndex(int index)
     {
         if (_fields is null || index < 0 || index >= _fieldCount)

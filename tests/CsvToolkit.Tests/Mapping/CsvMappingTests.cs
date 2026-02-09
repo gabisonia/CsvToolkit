@@ -90,6 +90,26 @@ public sealed class CsvMappingTests
         Assert.Null(row.Score);
     }
 
+    [Fact]
+    public void NumericBooleanConversion_AreSupported()
+    {
+        // Arrange
+        const string csv = "flag\n1\n0\n";
+        using var reader = new CsvReader(new StringReader(csv));
+
+        // Act
+        var firstRead = reader.Read();
+        var first = reader.GetRecord<BooleanRecord>();
+        var secondRead = reader.Read();
+        var second = reader.GetRecord<BooleanRecord>();
+
+        // Assert
+        Assert.True(firstRead);
+        Assert.True(first.Flag);
+        Assert.True(secondRead);
+        Assert.False(second.Flag);
+    }
+
     private sealed class UpperCaseStringConverter : ICsvTypeConverter<string>
     {
         public bool TryParse(ReadOnlySpan<char> source, in CsvConverterContext context, out string value)
@@ -146,5 +166,10 @@ public sealed class CsvMappingTests
         public PersonStatus Status { get; set; }
 
         public int? Score { get; set; }
+    }
+
+    private sealed class BooleanRecord
+    {
+        public bool Flag { get; set; }
     }
 }

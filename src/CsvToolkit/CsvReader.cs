@@ -18,6 +18,7 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
     private bool _headerInitialized;
     private string[]? _headers;
     private Dictionary<string, int>? _headerLookup;
+    private string[] _generatedColumnNames = [];
     private int? _expectedColumnCount;
 
     public CsvReader(TextReader reader, CsvOptions? options = null, CsvMapRegistry? mapRegistry = null, bool leaveOpen = false)
@@ -52,7 +53,7 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
 
     public int FieldCount => CurrentRow.FieldCount;
 
-    public IReadOnlyList<string> Headers => _headers ?? Array.Empty<string>();
+    public IReadOnlyList<string> Headers => _headers ?? [];
 
     public bool TryReadRow(out CsvRow row)
     {
@@ -220,7 +221,7 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
 
     public void Dispose()
     {
-        _parser.Dispose();
+        _parser.Dispose(); 
     }
 
     public ValueTask DisposeAsync()
@@ -236,7 +237,7 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
         }
 
         _headerInitialized = true;
-        _headers = Array.Empty<string>();
+        _headers = [];
 
         if (!Options.HasHeader)
         {
@@ -272,7 +273,7 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
         }
 
         _headerInitialized = true;
-        _headers = Array.Empty<string>();
+        _headers = [];
 
         if (!Options.HasHeader)
         {
@@ -352,7 +353,7 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
 
             for (var i = _headers.Length; i < row.FieldCount; i++)
             {
-                values[$"Column{i}"] = row.GetFieldString(i);
+                values[GetGeneratedColumnName(i)] = row.GetFieldString(i);
             }
 
             return values;
@@ -360,7 +361,7 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
 
         for (var i = 0; i < row.FieldCount; i++)
         {
-            values[$"Column{i}"] = row.GetFieldString(i);
+            values[GetGeneratedColumnName(i)] = row.GetFieldString(i);
         }
 
         return values;
@@ -410,6 +411,31 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
 
         _memberIndexCache[map.RecordType] = indices;
         return indices;
+    }
+
+    private string GetGeneratedColumnName(int index)
+    {
+        if (index < _generatedColumnNames.Length)
+        {
+            return _generatedColumnNames[index];
+        }
+
+        var newSize = _generatedColumnNames.Length == 0 ? 8 : _generatedColumnNames.Length;
+        while (newSize <= index)
+        {
+            newSize *= 2;
+        }
+
+        var names = new string[newSize];
+        _generatedColumnNames.AsSpan().CopyTo(names);
+
+        for (var i = _generatedColumnNames.Length; i < names.Length; i++)
+        {
+            names[i] = $"Column{i}";
+        }
+
+        _generatedColumnNames = names;
+        return _generatedColumnNames[index];
     }
 
     private void HandleBadData(int fieldIndex, string message, ReadOnlyMemory<char> rawField)

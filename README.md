@@ -2,7 +2,7 @@
 
 `CsvToolkit` is a high-performance CSV library for `net10.0` focused on streaming and low allocations with `Span<T>`, `Memory<T>`, and `ArrayPool<T>`.
 
-## Public API Proposal
+## Public API Overview
 
 ```csharp
 var options = new CsvOptions
@@ -136,21 +136,21 @@ Benchmark dataset generation is deterministic (`Random` seed-based) inside bench
 
 ### Latest Results
 
-Run date: `2026-02-09`  
+Run date: `2026-02-10`  
 Machine: `Apple M3 Pro`  
 Runtime: `.NET 10.0.0`  
 Command: `dotnet run -c Release --project benchmarks/CsvToolkit.Benchmarks -- --filter "*CsvReadWriteBenchmarks*"`
 
 | Method                                  | RowCount | Mean     | Error    | StdDev   | Ratio | Gen0      | Gen1     | Gen2     | Allocated | Alloc Ratio |
 |---------------------------------------- |--------- |---------:|---------:|---------:|------:|----------:|---------:|---------:|----------:|------------:|
-| CsvToolkit_WriteTyped_Stream            | 100000   | 21.29 ms | 0.034 ms | 0.032 ms |  0.40 | 1593.7500 | 406.2500 | 343.7500 |  25.97 MB |        1.35 |
-| CsvHelper_WriteTyped_Stream             | 100000   | 24.35 ms | 0.078 ms | 0.069 ms |  0.46 | 3281.2500 | 656.2500 | 343.7500 |  39.41 MB |        2.05 |
-| CsvToolkit_ReadDictionary_Stream        | 100000   | 30.60 ms | 0.133 ms | 0.111 ms |  0.58 | 6593.7500 |        - |        - |  52.64 MB |        2.74 |
-| CsvHelper_ReadDynamic_Stream            | 100000   | 44.74 ms | 0.060 ms | 0.053 ms |  0.84 | 9916.6667 | 250.0000 |        - |  79.41 MB |        4.14 |
-| CsvHelper_ReadTyped_Stream              | 100000   | 46.73 ms | 0.129 ms | 0.108 ms |  0.88 | 4545.4545 | 181.8182 |        - |  36.72 MB |        1.91 |
-| CsvHelper_ReadTyped_SemicolonHighQuote  | 100000   | 49.82 ms | 0.165 ms | 0.138 ms |  0.94 | 4600.0000 | 200.0000 |        - |  36.72 MB |        1.91 |
-| CsvToolkit_ReadTyped_Stream             | 100000   | 53.07 ms | 0.367 ms | 0.307 ms |  1.00 | 2400.0000 |        - |        - |   19.2 MB |        1.00 |
-| CsvToolkit_ReadTyped_SemicolonHighQuote | 100000   | 57.39 ms | 0.140 ms | 0.131 ms |  1.08 | 2333.3333 |        - |        - |   19.2 MB |        1.00 |
+| CsvToolkit_WriteTyped_Stream            | 100000   | 20.76 ms | 0.110 ms | 0.098 ms |  0.42 | 1593.7500 | 406.2500 | 343.7500 |  25.97 MB |        1.35 |
+| CsvHelper_WriteTyped_Stream             | 100000   | 24.16 ms | 0.135 ms | 0.120 ms |  0.48 | 3281.2500 | 656.2500 | 343.7500 |   39.4 MB |        2.05 |
+| CsvToolkit_ReadDictionary_Stream        | 100000   | 26.78 ms | 0.060 ms | 0.050 ms |  0.54 | 6593.7500 |        - |        - |  52.64 MB |        2.74 |
+| CsvHelper_ReadDynamic_Stream            | 100000   | 43.98 ms | 0.238 ms | 0.186 ms |  0.88 | 9916.6667 | 250.0000 |        - |  79.41 MB |        4.14 |
+| CsvHelper_ReadTyped_Stream              | 100000   | 45.86 ms | 0.318 ms | 0.298 ms |  0.92 | 4545.4545 | 181.8182 |        - |  36.72 MB |        1.91 |
+| CsvToolkit_ReadTyped_SemicolonHighQuote | 100000   | 48.81 ms | 0.121 ms | 0.107 ms |  0.98 | 2400.0000 |        - |        - |   19.2 MB |        1.00 |
+| CsvHelper_ReadTyped_SemicolonHighQuote  | 100000   | 49.88 ms | 0.187 ms | 0.166 ms |  1.00 | 4545.4545 | 181.8182 |        - |  36.72 MB |        1.91 |
+| CsvToolkit_ReadTyped_Stream             | 100000   | 49.90 ms | 0.206 ms | 0.183 ms |  1.00 | 2400.0000 |        - |        - |   19.2 MB |        1.00 |
 
 Raw benchmark artifacts:
 - `BenchmarkDotNet.Artifacts/results/CsvToolkit.Benchmarks.CsvReadWriteBenchmarks-report-github.md`
