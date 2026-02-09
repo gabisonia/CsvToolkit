@@ -1,0 +1,30 @@
+# macOS
+.DS_Store
+
+# .NET build output
+bin/
+obj/
+out/
+
+# Test artifacts
+TestResults/
+*.trx
+*.coverage
+coverage/
+
+# BenchmarkDotNet artifacts
+BenchmarkDotNet.Artifacts/
+
+# User- and machine-specific files
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.DotSettings.user
+
+# Rider / IntelliJ
+.idea/
+
+# VS Code
+.vscode/
+
