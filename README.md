@@ -2,6 +2,14 @@
 
 `CsvToolkit` is a high-performance CSV library for `net10.0` focused on streaming and low allocations with `Span<T>`, `Memory<T>`, and `ArrayPool<T>`.
 
+## NuGet
+
+Package name on NuGet.org: `CsvToolkit.Core`
+
+```bash
+dotnet add package CsvToolkit.Core --prerelease
+```
+
 ## Public API Overview
 
 ```csharp
