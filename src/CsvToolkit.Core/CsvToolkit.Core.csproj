@@ -11,8 +11,8 @@
         <Description>High-performance CSV reader/writer for .NET with streaming APIs and low allocations.</Description>
         <Authors>Irakli Gabisonia</Authors>
         <PackageTags>csv;parser;writer;streaming;dotnet</PackageTags>
-        <PackageProjectUrl>https://github.com/gabisonia/CsvToolkit</PackageProjectUrl>
-        <RepositoryUrl>https://github.com/gabisonia/CsvToolkit</RepositoryUrl>
+        <PackageProjectUrl>https://github.com/gabisonia/CsvToolkitCore</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/gabisonia/CsvToolkitCore</RepositoryUrl>
         <RepositoryType>git</RepositoryType>
         <PackageReadmeFile>README.md</PackageReadmeFile>
 
