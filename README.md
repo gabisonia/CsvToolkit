@@ -116,7 +116,7 @@ maps.Register<Person>(map =>
 
 ## Benchmarks
 
-Benchmarks compare `CsvToolkit` with `CsvHelper` for:
+Benchmarks compare `CsvToolkit.Core` with `CsvHelper` for:
 
 - Typed read (`100k` rows)
 - Dictionary/dynamic read
@@ -136,7 +136,7 @@ dotnet run -c Release --project benchmarks/CsvToolkit.Benchmarks -- --filter "*"
 Run one benchmark (faster while iterating):
 
 ```bash
-dotnet run -c Release --project benchmarks/CsvToolkit.Benchmarks -- --filter "*CsvReadWriteBenchmarks.CsvToolkit_ReadTyped_Stream*"
+dotnet run -c Release --project benchmarks/CsvToolkit.Benchmarks -- --filter "*CsvReadWriteBenchmarks.CsvToolkitCore_ReadTyped_Stream*"
 ```
 
 Run from IDE:
@@ -158,14 +158,14 @@ Command: `dotnet run -c Release --project benchmarks/CsvToolkit.Benchmarks -- --
 
 | Method                                  | RowCount | Mean     | Error    | StdDev   | Ratio | Gen0      | Gen1     | Gen2     | Allocated | Alloc Ratio |
 |---------------------------------------- |--------- |---------:|---------:|---------:|------:|----------:|---------:|---------:|----------:|------------:|
-| CsvToolkit_WriteTyped_Stream            | 100000   | 20.76 ms | 0.110 ms | 0.098 ms |  0.42 | 1593.7500 | 406.2500 | 343.7500 |  25.97 MB |        1.35 |
+| CsvToolkitCore_WriteTyped_Stream        | 100000   | 20.76 ms | 0.110 ms | 0.098 ms |  0.42 | 1593.7500 | 406.2500 | 343.7500 |  25.97 MB |        1.35 |
 | CsvHelper_WriteTyped_Stream             | 100000   | 24.16 ms | 0.135 ms | 0.120 ms |  0.48 | 3281.2500 | 656.2500 | 343.7500 |   39.4 MB |        2.05 |
-| CsvToolkit_ReadDictionary_Stream        | 100000   | 26.78 ms | 0.060 ms | 0.050 ms |  0.54 | 6593.7500 |        - |        - |  52.64 MB |        2.74 |
+| CsvToolkitCore_ReadDictionary_Stream    | 100000   | 26.78 ms | 0.060 ms | 0.050 ms |  0.54 | 6593.7500 |        - |        - |  52.64 MB |        2.74 |
 | CsvHelper_ReadDynamic_Stream            | 100000   | 43.98 ms | 0.238 ms | 0.186 ms |  0.88 | 9916.6667 | 250.0000 |        - |  79.41 MB |        4.14 |
 | CsvHelper_ReadTyped_Stream              | 100000   | 45.86 ms | 0.318 ms | 0.298 ms |  0.92 | 4545.4545 | 181.8182 |        - |  36.72 MB |        1.91 |
-| CsvToolkit_ReadTyped_SemicolonHighQuote | 100000   | 48.81 ms | 0.121 ms | 0.107 ms |  0.98 | 2400.0000 |        - |        - |   19.2 MB |        1.00 |
+| CsvToolkitCore_ReadTyped_SemicolonHighQuote | 100000   | 48.81 ms | 0.121 ms | 0.107 ms |  0.98 | 2400.0000 |        - |        - |   19.2 MB |        1.00 |
 | CsvHelper_ReadTyped_SemicolonHighQuote  | 100000   | 49.88 ms | 0.187 ms | 0.166 ms |  1.00 | 4545.4545 | 181.8182 |        - |  36.72 MB |        1.91 |
-| CsvToolkit_ReadTyped_Stream             | 100000   | 49.90 ms | 0.206 ms | 0.183 ms |  1.00 | 2400.0000 |        - |        - |   19.2 MB |        1.00 |
+| CsvToolkitCore_ReadTyped_Stream         | 100000   | 49.90 ms | 0.206 ms | 0.183 ms |  1.00 | 2400.0000 |        - |        - |   19.2 MB |        1.00 |
 
 Raw benchmark artifacts:
 - `BenchmarkDotNet.Artifacts/results/CsvToolkit.Benchmarks.CsvReadWriteBenchmarks-report-github.md`

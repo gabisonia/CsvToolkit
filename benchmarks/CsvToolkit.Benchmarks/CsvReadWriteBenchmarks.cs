@@ -47,7 +47,7 @@ public class CsvReadWriteBenchmarks
     }
 
     [Benchmark(Baseline = true)]
-    public int CsvToolkit_ReadTyped_Stream()
+    public int CsvToolkitCore_ReadTyped_Stream()
     {
         using var stream = new MemoryStream(_csvDefaultUtf8, writable: false);
         using var reader = new CsvReader(stream, new CsvOptions
@@ -88,7 +88,7 @@ public class CsvReadWriteBenchmarks
     }
 
     [Benchmark]
-    public int CsvToolkit_ReadDictionary_Stream()
+    public int CsvToolkitCore_ReadDictionary_Stream()
     {
         using var stream = new MemoryStream(_csvDefaultUtf8, writable: false);
         using var reader = new CsvReader(stream, new CsvOptions
@@ -129,7 +129,7 @@ public class CsvReadWriteBenchmarks
     }
 
     [Benchmark]
-    public long CsvToolkit_WriteTyped_Stream()
+    public long CsvToolkitCore_WriteTyped_Stream()
     {
         using var stream = new MemoryStream();
         using var writer = new CsvWriter(stream, new CsvOptions
@@ -175,7 +175,7 @@ public class CsvReadWriteBenchmarks
     }
 
     [Benchmark]
-    public int CsvToolkit_ReadTyped_SemicolonHighQuote()
+    public int CsvToolkitCore_ReadTyped_SemicolonHighQuote()
     {
         using var stream = new MemoryStream(_csvSemicolonQuotedUtf8, writable: false);
         using var reader = new CsvReader(stream, new CsvOptions
