@@ -61,6 +61,7 @@ internal sealed class CsvParser(ICsvCharInput input, CsvOptions options) : IDisp
         var afterClosingQuote = false;
         var fieldWasQuoted = false;
         var consumedAnything = false;
+        var rowStartLine = LineNumber;
 
         while (true)
         {
@@ -87,7 +88,7 @@ internal sealed class CsvParser(ICsvCharInput input, CsvOptions options) : IDisp
                     return false;
                 }
 
-                CurrentRow = _rowBuffer.ToRow(RowIndex, LineNumber);
+                CurrentRow = _rowBuffer.ToRow(RowIndex, rowStartLine);
                 RowIndex++;
                 return true;
             }
@@ -137,6 +138,11 @@ internal sealed class CsvParser(ICsvCharInput input, CsvOptions options) : IDisp
                     continue;
                 }
 
+                if (TryAppendQuotedNewLine(ch))
+                {
+                    continue;
+                }
+
                 _rowBuffer.Append(ch);
                 continue;
             }
@@ -158,10 +164,11 @@ internal sealed class CsvParser(ICsvCharInput input, CsvOptions options) : IDisp
                     if (ignoreBlankLines && _rowBuffer.IsBlankLine())
                     {
                         ResetRowState(ref consumedAnything, ref inQuotes, ref afterClosingQuote, ref fieldWasQuoted);
+                        rowStartLine = LineNumber;
                         continue;
                     }
 
-                    CurrentRow = _rowBuffer.ToRow(RowIndex, LineNumber);
+                    CurrentRow = _rowBuffer.ToRow(RowIndex, rowStartLine);
                     RowIndex++;
                     return true;
                 }
@@ -213,10 +220,11 @@ internal sealed class CsvParser(ICsvCharInput input, CsvOptions options) : IDisp
                 if (ignoreBlankLines && _rowBuffer.IsBlankLine())
                 {
                     ResetRowState(ref consumedAnything, ref inQuotes, ref afterClosingQuote, ref fieldWasQuoted);
+                    rowStartLine = LineNumber;
                     continue;
                 }
 
-                CurrentRow = _rowBuffer.ToRow(RowIndex, LineNumber);
+                CurrentRow = _rowBuffer.ToRow(RowIndex, rowStartLine);
                 RowIndex++;
                 return true;
             }
@@ -246,6 +254,7 @@ internal sealed class CsvParser(ICsvCharInput input, CsvOptions options) : IDisp
         var afterClosingQuote = false;
         var fieldWasQuoted = false;
         var consumedAnything = false;
+        var rowStartLine = LineNumber;
 
         while (true)
         {
@@ -272,7 +281,7 @@ internal sealed class CsvParser(ICsvCharInput input, CsvOptions options) : IDisp
                     return false;
                 }
 
-                CurrentRow = _rowBuffer.ToRow(RowIndex, LineNumber);
+                CurrentRow = _rowBuffer.ToRow(RowIndex, rowStartLine);
                 RowIndex++;
                 return true;
             }
@@ -322,6 +331,11 @@ internal sealed class CsvParser(ICsvCharInput input, CsvOptions options) : IDisp
                     continue;
                 }
 
+                if (await TryAppendQuotedNewLineAsync(ch, cancellationToken).ConfigureAwait(false))
+                {
+                    continue;
+                }
+
                 _rowBuffer.Append(ch);
                 continue;
             }
@@ -343,10 +357,11 @@ internal sealed class CsvParser(ICsvCharInput input, CsvOptions options) : IDisp
                     if (ignoreBlankLines && _rowBuffer.IsBlankLine())
                     {
                         ResetRowState(ref consumedAnything, ref inQuotes, ref afterClosingQuote, ref fieldWasQuoted);
+                        rowStartLine = LineNumber;
                         continue;
                     }
 
-                    CurrentRow = _rowBuffer.ToRow(RowIndex, LineNumber);
+                    CurrentRow = _rowBuffer.ToRow(RowIndex, rowStartLine);
                     RowIndex++;
                     return true;
                 }
@@ -398,10 +413,11 @@ internal sealed class CsvParser(ICsvCharInput input, CsvOptions options) : IDisp
                 if (ignoreBlankLines && _rowBuffer.IsBlankLine())
                 {
                     ResetRowState(ref consumedAnything, ref inQuotes, ref afterClosingQuote, ref fieldWasQuoted);
+                    rowStartLine = LineNumber;
                     continue;
                 }
 
-                CurrentRow = _rowBuffer.ToRow(RowIndex, LineNumber);
+                CurrentRow = _rowBuffer.ToRow(RowIndex, rowStartLine);
                 RowIndex++;
                 return true;
             }
@@ -426,6 +442,74 @@ internal sealed class CsvParser(ICsvCharInput input, CsvOptions options) : IDisp
         inQuotes = false;
         afterClosingQuote = false;
         fieldWasQuoted = false;
+    }
+
+    private bool TryAppendQuotedNewLine(char ch)
+    {
+        if (ch == '\r')
+        {
+            var next = ReadChar();
+            if (next == '\n')
+            {
+                _rowBuffer.Append('\r');
+                _rowBuffer.Append('\n');
+            }
+            else
+            {
+                if (next >= 0)
+                {
+                    PushBack(next);
+                }
+
+                _rowBuffer.Append('\r');
+            }
+
+            LineNumber++;
+            return true;
+        }
+
+        if (ch == '\n')
+        {
+            _rowBuffer.Append('\n');
+            LineNumber++;
+            return true;
+        }
+
+        return false;
+    }
+
+    private async ValueTask<bool> TryAppendQuotedNewLineAsync(char ch, CancellationToken cancellationToken)
+    {
+        if (ch == '\r')
+        {
+            var next = await ReadCharAsync(cancellationToken).ConfigureAwait(false);
+            if (next == '\n')
+            {
+                _rowBuffer.Append('\r');
+                _rowBuffer.Append('\n');
+            }
+            else
+            {
+                if (next >= 0)
+                {
+                    PushBack(next);
+                }
+
+                _rowBuffer.Append('\r');
+            }
+
+            LineNumber++;
+            return true;
+        }
+
+        if (ch == '\n')
+        {
+            _rowBuffer.Append('\n');
+            LineNumber++;
+            return true;
+        }
+
+        return false;
     }
 
     private void ConsumeNewLineSuffix(char ch)

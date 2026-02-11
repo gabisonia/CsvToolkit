@@ -65,8 +65,8 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
             return false;
         }
 
-        ValidateColumnCount(row);
         CurrentRow = row;
+        ValidateColumnCount(row);
         return true;
     }
 
@@ -375,6 +375,22 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
         }
 
         var indices = new int[map.Members.Length];
+        HashSet<int>? usedOrdinals = null;
+        if (_headerLookup is null)
+        {
+            usedOrdinals = [];
+            for (var i = 0; i < map.Members.Length; i++)
+            {
+                var member = map.Members[i];
+                if (member.Ignore || member.Setter is null || !member.Index.HasValue)
+                {
+                    continue;
+                }
+
+                usedOrdinals.Add(member.Index.Value);
+            }
+        }
+
         var fallbackIndex = 0;
 
         for (var i = 0; i < map.Members.Length; i++)
@@ -405,7 +421,13 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
                 continue;
             }
 
+            while (usedOrdinals!.Contains(fallbackIndex))
+            {
+                fallbackIndex++;
+            }
+
             indices[i] = fallbackIndex;
+            usedOrdinals!.Add(fallbackIndex);
             fallbackIndex++;
         }
 

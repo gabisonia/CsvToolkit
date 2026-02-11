@@ -199,6 +199,26 @@ public sealed class CsvWriterTests
     }
 
     [Fact]
+    public async Task AsyncApis_RespectCancellationToken()
+    {
+        // Arrange
+        using var text = new StringWriter();
+        await using var writer = new CsvWriter(text, new CsvOptions { NewLine = "\n" });
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        // Act / Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => writer.WriteFieldAsync("value".AsMemory(), cts.Token).AsTask());
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => writer.NextRecordAsync(cts.Token).AsTask());
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => writer.WriteHeaderAsync<WriteRecord>(cts.Token).AsTask());
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => writer.WriteRecordAsync(new WriteRecord(), cts.Token).AsTask());
+    }
+
+    [Fact]
     public void WriteRecord_Null_ThrowsArgumentNullException()
     {
         // Arrange

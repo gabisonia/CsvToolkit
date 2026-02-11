@@ -175,6 +175,33 @@ public sealed class CsvMappingTests
         Assert.Equal(42.5d, row.Score);
     }
 
+    [Fact]
+    public void NoHeaderMapping_MixedIndexedAndImplicitMembers_UseDistinctOrdinals()
+    {
+        // Arrange
+        const string csv = "11,22\n";
+        var options = new CsvOptions
+        {
+            HasHeader = false,
+            CultureInfo = CultureInfo.InvariantCulture
+        };
+        var maps = new CsvMapRegistry();
+        maps.Register<NoHeaderMixedIndexRecord>(map =>
+        {
+            map.Map(x => x.Second).Index(0);
+        });
+        using var reader = new CsvReader(new StringReader(csv), options, maps);
+
+        // Act
+        var read = reader.Read();
+        var row = reader.GetRecord<NoHeaderMixedIndexRecord>();
+
+        // Assert
+        Assert.True(read);
+        Assert.Equal(22, row.First);
+        Assert.Equal(11, row.Second);
+    }
+
     private sealed class UpperCaseStringConverter : ICsvTypeConverter<string>
     {
         public bool TryParse(ReadOnlySpan<char> source, in CsvConverterContext context, out string value)
@@ -284,5 +311,12 @@ public sealed class CsvMappingTests
         public string Name { get; set; } = string.Empty;
 
         public double Score { get; set; }
+    }
+
+    private sealed class NoHeaderMixedIndexRecord
+    {
+        public int First { get; set; }
+
+        public int Second { get; set; }
     }
 }

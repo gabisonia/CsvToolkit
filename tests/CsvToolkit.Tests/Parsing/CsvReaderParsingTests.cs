@@ -183,7 +183,34 @@ public sealed class CsvReaderParsingTests
 
         // Assert
         Assert.True(firstRead);
-        Assert.Throws<CsvException>(act);
+        var exception = Assert.Throws<CsvException>(act);
+        Assert.Equal(2, exception.RowIndex);
+        Assert.Equal(3, exception.LineNumber);
+        Assert.Equal(1, exception.FieldIndex);
+    }
+
+    [Fact]
+    public async Task DetectColumnCount_ReadAsync_ThrowsInStrictModeWithCurrentRowMetadata()
+    {
+        // Arrange
+        const string csv = "a,b\n1,2\n3\n";
+        var options = new CsvOptions
+        {
+            DetectColumnCount = true,
+            ReadMode = CsvReadMode.Strict
+        };
+        await using var reader = new CsvReader(new StringReader(csv), options);
+
+        // Act
+        var firstRead = await reader.ReadAsync();
+        async Task ActAsync() => await reader.ReadAsync();
+
+        // Assert
+        Assert.True(firstRead);
+        var exception = await Assert.ThrowsAsync<CsvException>(ActAsync);
+        Assert.Equal(2, exception.RowIndex);
+        Assert.Equal(3, exception.LineNumber);
+        Assert.Equal(1, exception.FieldIndex);
     }
 
     [Fact]
@@ -375,6 +402,41 @@ public sealed class CsvReaderParsingTests
         // Assert
         Assert.True(read);
         Assert.Equal("\r\n", reader.DetectedNewLine);
+    }
+
+    [Fact]
+    public void LineNumber_TracksRecordStartLine()
+    {
+        // Arrange
+        const string csv = "id,name\n1,Ada\n";
+        using var reader = new CsvReader(new StringReader(csv));
+
+        // Act
+        var read = reader.Read();
+
+        // Assert
+        Assert.True(read);
+        Assert.Equal(2, reader.LineNumber);
+    }
+
+    [Fact]
+    public void LineNumber_AccountsForEmbeddedNewLinesInsideQuotedFields()
+    {
+        // Arrange
+        const string csv = "id,notes\n1,\"line1\nline2\"\n2,Bob\n";
+        using var reader = new CsvReader(new StringReader(csv));
+
+        // Act
+        var firstRead = reader.Read();
+        var firstLine = reader.LineNumber;
+        var secondRead = reader.Read();
+        var secondLine = reader.LineNumber;
+
+        // Assert
+        Assert.True(firstRead);
+        Assert.Equal(2, firstLine);
+        Assert.True(secondRead);
+        Assert.Equal(4, secondLine);
     }
 
     private sealed class CultureRecord

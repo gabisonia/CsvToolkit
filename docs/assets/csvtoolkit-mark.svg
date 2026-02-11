@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">CsvToolkit.Core mark</title>
+  <desc id="desc">A rounded square with CSV grid lines and a diagonal slash.</desc>
+  <defs>
+    <linearGradient id="markGradient" x1="56" y1="56" x2="456" y2="456" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0EA5E9"/>
+      <stop offset="1" stop-color="#14B8A6"/>
+    </linearGradient>
+    <linearGradient id="slashGradient" x1="134" y1="382" x2="378" y2="138" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F59E0B"/>
+      <stop offset="1" stop-color="#F97316"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="56" y="56" width="400" height="400" rx="92" fill="url(#markGradient)"/>
+
+  <g stroke="#FFFFFF" stroke-width="18" stroke-linecap="round" opacity="0.95">
+    <line x1="148" y1="176" x2="364" y2="176"/>
+    <line x1="148" y1="256" x2="364" y2="256"/>
+    <line x1="148" y1="336" x2="364" y2="336"/>
+    <line x1="216" y1="136" x2="216" y2="376"/>
+    <line x1="296" y1="136" x2="296" y2="376"/>
+  </g>
+
+  <path d="M138 366 L230 366 L378 138 L286 138 Z" fill="url(#slashGradient)"/>
+</svg>

@@ -58,10 +58,22 @@ public sealed class CsvWriter : IDisposable, IAsyncDisposable
         NextRecord();
     }
 
-    public ValueTask WriteHeaderAsync<T>(CancellationToken cancellationToken = default)
+    public async ValueTask WriteHeaderAsync<T>(CancellationToken cancellationToken = default)
     {
-        WriteHeader<T>();
-        return ValueTask.CompletedTask;
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var map = _mapRegistry.GetOrCreate(typeof(T));
+        foreach (var member in map.Members)
+        {
+            if (member.Ignore)
+            {
+                continue;
+            }
+
+            await WriteFieldCoreAsync(member.Name.AsMemory(), cancellationToken).ConfigureAwait(false);
+        }
+
+        await NextRecordAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private void WriteField(ReadOnlySpan<char> value)
@@ -85,8 +97,7 @@ public sealed class CsvWriter : IDisposable, IAsyncDisposable
 
     public ValueTask WriteFieldAsync(ReadOnlyMemory<char> value, CancellationToken cancellationToken = default)
     {
-        WriteField(value.Span);
-        return ValueTask.CompletedTask;
+        return WriteFieldCoreAsync(value, cancellationToken);
     }
 
     public void WriteField<T>(T value)
@@ -149,10 +160,65 @@ public sealed class CsvWriter : IDisposable, IAsyncDisposable
         WriteField(formatted.AsSpan());
     }
 
-    public ValueTask WriteFieldAsync<T>(T value, CancellationToken cancellationToken = default)
+    public async ValueTask WriteFieldAsync<T>(T value, CancellationToken cancellationToken = default)
     {
-        WriteField(value);
-        return ValueTask.CompletedTask;
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (value is null)
+        {
+            await WriteFieldCoreAsync(ReadOnlyMemory<char>.Empty, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (value is string stringValue)
+        {
+            await WriteFieldCoreAsync(stringValue.AsMemory(), cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (value is char c)
+        {
+            await WriteFieldCoreAsync(c.ToString().AsMemory(), cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (value is ISpanFormattable formattable)
+        {
+            Span<char> stack = stackalloc char[128];
+            if (formattable.TryFormat(stack, out var written, default, Options.CultureInfo))
+            {
+                var stackFormatted = new string(stack[..written]);
+                await WriteFieldCoreAsync(stackFormatted.AsMemory(), cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            var pooled = ArrayPool<char>.Shared.Rent(1024);
+            try
+            {
+                var success = false;
+                while (!success)
+                {
+                    success = formattable.TryFormat(pooled, out written, default, Options.CultureInfo);
+                    if (!success)
+                    {
+                        ArrayPool<char>.Shared.Return(pooled);
+                        pooled = ArrayPool<char>.Shared.Rent(pooled.Length * 2);
+                    }
+                }
+
+                var pooledFormatted = new string(pooled, 0, written);
+                await WriteFieldCoreAsync(pooledFormatted.AsMemory(), cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            finally
+            {
+                ArrayPool<char>.Shared.Return(pooled);
+            }
+        }
+
+        var context = new CsvConverterContext(Options.CultureInfo, RowIndex, _fieldIndex, null);
+        var formatted = CsvValueConverter.FormatToString(value, value.GetType(), Options, null, context);
+        await WriteFieldCoreAsync(formatted.AsMemory(), cancellationToken).ConfigureAwait(false);
     }
 
     public void NextRecord()
@@ -164,10 +230,14 @@ public sealed class CsvWriter : IDisposable, IAsyncDisposable
         RowIndex++;
     }
 
-    public ValueTask NextRecordAsync(CancellationToken cancellationToken = default)
+    public async ValueTask NextRecordAsync(CancellationToken cancellationToken = default)
     {
-        NextRecord();
-        return ValueTask.CompletedTask;
+        cancellationToken.ThrowIfCancellationRequested();
+        var newLine = Options.NewLine ?? Environment.NewLine;
+        await _output.WriteAsync(newLine.AsMemory(), cancellationToken).ConfigureAwait(false);
+        _firstField = true;
+        _fieldIndex = 0;
+        RowIndex++;
     }
 
     public void WriteRecord<T>(T record)
@@ -208,10 +278,44 @@ public sealed class CsvWriter : IDisposable, IAsyncDisposable
         NextRecord();
     }
 
-    public ValueTask WriteRecordAsync<T>(T record, CancellationToken cancellationToken = default)
+    public async ValueTask WriteRecordAsync<T>(T record, CancellationToken cancellationToken = default)
     {
-        WriteRecord(record);
-        return ValueTask.CompletedTask;
+        if (record is null)
+        {
+            throw new ArgumentNullException(nameof(record));
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var map = _mapRegistry.GetOrCreate(typeof(T));
+        object boxed = record;
+
+        foreach (var member in map.Members)
+        {
+            if (member.Ignore || member.Getter is null)
+            {
+                continue;
+            }
+
+            var value = member.Getter(boxed);
+            if (member.Converter is not null)
+            {
+                var context = new CsvConverterContext(Options.CultureInfo, RowIndex, _fieldIndex, member.Name);
+                var formatted =
+                    CsvValueConverter.FormatToString(value, member.PropertyType, Options, member.Converter, context);
+                await WriteFieldCoreAsync(formatted.AsMemory(), cancellationToken).ConfigureAwait(false);
+            }
+            else if (value is null)
+            {
+                await WriteFieldCoreAsync(ReadOnlyMemory<char>.Empty, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await WriteFieldAsync(value, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        await NextRecordAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public void Flush()
@@ -243,6 +347,17 @@ public sealed class CsvWriter : IDisposable, IAsyncDisposable
 
         _charScratch[0] = Options.Delimiter;
         _output.Write(_charScratch.AsSpan(0, 1));
+    }
+
+    private ValueTask WriteDelimiterIfNeededAsync(CancellationToken cancellationToken)
+    {
+        if (_firstField)
+        {
+            return ValueTask.CompletedTask;
+        }
+
+        _charScratch[0] = Options.Delimiter;
+        return _output.WriteAsync(_charScratch.AsMemory(0, 1), cancellationToken);
     }
 
     private bool NeedsQuoting(ReadOnlySpan<char> value)
@@ -296,9 +411,63 @@ public sealed class CsvWriter : IDisposable, IAsyncDisposable
         }
     }
 
+    private async ValueTask WriteEscapedAsync(ReadOnlyMemory<char> value, CancellationToken cancellationToken)
+    {
+        var segmentStart = 0;
+        var length = value.Length;
+
+        for (var i = 0; i < length; i++)
+        {
+            if (value.Span[i] != Options.Quote)
+            {
+                continue;
+            }
+
+            if (i > segmentStart)
+            {
+                await _output.WriteAsync(value[segmentStart..i], cancellationToken).ConfigureAwait(false);
+            }
+
+            _charScratch[0] = Options.Escape;
+            _charScratch[1] = Options.Quote;
+            await _output.WriteAsync(_charScratch.AsMemory(0, 2), cancellationToken).ConfigureAwait(false);
+            segmentStart = i + 1;
+        }
+
+        if (segmentStart < length)
+        {
+            await _output.WriteAsync(value[segmentStart..], cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     private void WriteChar(char value)
     {
         _charScratch[0] = value;
         _output.Write(_charScratch.AsSpan(0, 1));
+    }
+
+    private ValueTask WriteCharAsync(char value, CancellationToken cancellationToken)
+    {
+        _charScratch[0] = value;
+        return _output.WriteAsync(_charScratch.AsMemory(0, 1), cancellationToken);
+    }
+
+    private async ValueTask WriteFieldCoreAsync(ReadOnlyMemory<char> value, CancellationToken cancellationToken)
+    {
+        await WriteDelimiterIfNeededAsync(cancellationToken).ConfigureAwait(false);
+
+        if (NeedsQuoting(value.Span))
+        {
+            await WriteCharAsync(Options.Quote, cancellationToken).ConfigureAwait(false);
+            await WriteEscapedAsync(value, cancellationToken).ConfigureAwait(false);
+            await WriteCharAsync(Options.Quote, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            await _output.WriteAsync(value, cancellationToken).ConfigureAwait(false);
+        }
+
+        _firstField = false;
+        _fieldIndex++;
     }
 }
