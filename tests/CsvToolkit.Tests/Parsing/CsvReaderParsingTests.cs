@@ -288,6 +288,95 @@ public sealed class CsvReaderParsingTests
         Assert.Throws<CsvException>(act);
     }
 
+    [Fact]
+    public void TryReadDynamic_ReturnsExpandoWithHeaderValues()
+    {
+        // Arrange
+        const string csv = "id,name\n1,Ada\n";
+        using var reader = new CsvReader(new StringReader(csv));
+
+        // Act
+        var read = reader.TryReadDynamic(out var dynamicRow);
+        var values = Assert.IsAssignableFrom<IDictionary<string, object?>>((object?)dynamicRow);
+
+        // Assert
+        Assert.True(read);
+        Assert.Equal("1", values["id"]);
+        Assert.Equal("Ada", values["name"]);
+    }
+
+    [Fact]
+    public async Task ReadDictionaryAsync_WithoutHeader_UsesGeneratedColumnNames()
+    {
+        // Arrange
+        const string csv = "1,Ada\n";
+        var options = new CsvOptions { HasHeader = false };
+        using var reader = new CsvReader(new StringReader(csv), options);
+
+        // Act
+        var values = await reader.ReadDictionaryAsync();
+        var eofValues = await reader.ReadDictionaryAsync();
+
+        // Assert
+        Assert.NotNull(values);
+        Assert.Equal("1", values["Column0"]);
+        Assert.Equal("Ada", values["Column1"]);
+        Assert.Null(eofValues);
+    }
+
+    [Fact]
+    public void TryReadDictionary_WhenRowHasExtraFields_GeneratesAdditionalColumnNames()
+    {
+        // Arrange
+        const string csv = "id\n1,Ada,Engineer\n";
+        var options = new CsvOptions { DetectColumnCount = false };
+        using var reader = new CsvReader(new StringReader(csv), options);
+
+        // Act
+        var read = reader.TryReadDictionary(out var values);
+
+        // Assert
+        Assert.True(read);
+        Assert.NotNull(values);
+        Assert.Equal("1", values["id"]);
+        Assert.Equal("Ada", values["Column1"]);
+        Assert.Equal("Engineer", values["Column2"]);
+    }
+
+    [Fact]
+    public void TryReadDictionary_WhenRowHasMissingFields_AssignsNullValuesForHeaderColumns()
+    {
+        // Arrange
+        const string csv = "id,name,role\n1,Ada\n";
+        var options = new CsvOptions { DetectColumnCount = false };
+        using var reader = new CsvReader(new StringReader(csv), options);
+
+        // Act
+        var read = reader.TryReadDictionary(out var values);
+
+        // Assert
+        Assert.True(read);
+        Assert.NotNull(values);
+        Assert.Equal("1", values["id"]);
+        Assert.Equal("Ada", values["name"]);
+        Assert.Null(values["role"]);
+    }
+
+    [Fact]
+    public void DetectedNewLine_UsesFirstObservedNewLineSequence()
+    {
+        // Arrange
+        const string csv = "id,name\r\n1,Ada\r\n";
+        using var reader = new CsvReader(new StringReader(csv));
+
+        // Act
+        var read = reader.Read();
+
+        // Assert
+        Assert.True(read);
+        Assert.Equal("\r\n", reader.DetectedNewLine);
+    }
+
     private sealed class CultureRecord
     {
         public decimal Amount { get; set; }

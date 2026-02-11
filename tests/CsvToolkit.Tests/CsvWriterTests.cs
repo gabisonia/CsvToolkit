@@ -41,6 +41,63 @@ public sealed class CsvWriterTests
     }
 
     [Fact]
+    public void WriteField_QuotesLeadingAndTrailingWhitespace()
+    {
+        // Arrange
+        var options = new CsvOptions { NewLine = "\n" };
+        using var text = new StringWriter();
+        using var writer = new CsvWriter(text, options);
+
+        // Act
+        writer.WriteField(" Ada ");
+        writer.NextRecord();
+        var result = text.ToString();
+
+        // Assert
+        Assert.Equal("\" Ada \"\n", result);
+    }
+
+    [Fact]
+    public void WriteField_UsesConfiguredEscapeCharacter()
+    {
+        // Arrange
+        var options = new CsvOptions
+        {
+            Quote = '\'',
+            Escape = '\\',
+            NewLine = "\n"
+        };
+        using var text = new StringWriter();
+        using var writer = new CsvWriter(text, options);
+
+        // Act
+        writer.WriteField("It's fine");
+        writer.NextRecord();
+        var result = text.ToString();
+
+        // Assert
+        Assert.Equal("'It\\'s fine'\n", result);
+    }
+
+    [Fact]
+    public void WriteField_NullValue_WritesEmptyField()
+    {
+        // Arrange
+        var options = new CsvOptions { NewLine = "\n" };
+        using var text = new StringWriter();
+        using var writer = new CsvWriter(text, options);
+
+        // Act
+        writer.WriteField<string?>(null);
+        writer.WriteField("value");
+        writer.NextRecord();
+        var result = text.ToString();
+
+        // Assert
+        Assert.Equal(",value\n", result);
+    }
+
+    [Fact]
     public void WriteField_WithTabDelimiter_QuotesWhenNeeded()
     {
         // Arrange
@@ -139,6 +196,20 @@ public sealed class CsvWriterTests
         Assert.True(read);
         Assert.Equal("1", first);
         Assert.Equal("Ada", second);
+    }
+
+    [Fact]
+    public void WriteRecord_Null_ThrowsArgumentNullException()
+    {
+        // Arrange
+        using var text = new StringWriter();
+        using var writer = new CsvWriter(text);
+
+        // Act
+        Action act = () => writer.WriteRecord<WriteRecord>(null!);
+
+        // Assert
+        Assert.Throws<ArgumentNullException>(act);
     }
 
     private sealed class LowerCaseConverter : ICsvTypeConverter<string>
