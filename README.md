@@ -221,29 +221,34 @@ OS: `macOS Tahoe 26.3 (Darwin 25.3.0)`
 Runtime: `.NET 10.0.0`  
 Command: `dotnet run -c Release --project benchmarks/CsvToolkit.Benchmarks -- --filter "*CsvReadWriteBenchmarks*"`
 
-Top-line results (`RowCount = 100000`):
+Full paired comparison (all like-for-like scenarios in this run):
 
-| Method                                                    | Mean      | Allocated |
-|---------------------------------------------------------- |----------:|----------:|
-| CsvToolkitCore_ReadTyped_DuplicateHeader_NameIndex_Stream | 13.088 ms |  12.23 MB |
-| CsvHelper_ReadTyped_DuplicateHeader_NameIndex_Stream      | 13.932 ms |  17.64 MB |
-| CsvHelper_WriteTyped_WithConverterOptions_Stream          | 19.087 ms |   26.6 MB |
-| CsvToolkitCore_WriteTyped_WithConverterOptions_Stream     | 19.295 ms |  26.52 MB |
-| CsvHelper_WriteTyped_Stream                               | 22.670 ms |   39.4 MB |
-| CsvToolkitCore_WriteTyped_Stream                          | 23.988 ms |  38.86 MB |
-| CsvToolkitCore_ReadTyped_WithConverterOptions_Stream      | 26.408 ms |   12.8 MB |
-| CsvToolkitCore_ReadDictionary_Stream                      | 27.228 ms |  52.64 MB |
-| CsvHelper_ReadTyped_WithConverterOptions_Stream           | 27.290 ms |  25.81 MB |
-| CsvToolkitCore_ReadTyped_SemicolonHighQuote               | 40.004 ms |    9.3 MB |
-| CsvToolkitCore_ReadTyped_Stream                           | 41.431 ms |    9.3 MB |
-| CsvHelper_ReadDynamic_Stream                              | 42.923 ms |  79.41 MB |
-| CsvHelper_ReadTyped_Stream                                | 45.086 ms |  36.72 MB |
-| CsvHelper_ReadTyped_SemicolonHighQuote                    | 48.538 ms |  36.72 MB |
+| Scenario | RowCount | CsvToolkit.Core (Mean / Alloc) | CsvHelper (Mean / Alloc) | Time Winner | Allocation Winner |
+|--------- |---------:|-------------------------------:|--------------------------:|------------:|------------------:|
+| ReadTyped | 10,000 | 4.266 ms / 0.99 MB | 4.647 ms / 3.76 MB | CsvToolkit (`1.09x`) | CsvToolkit (`3.79x` lower) |
+| WriteTyped | 10,000 | 2.655 ms / 3.33 MB | 2.840 ms / 3.45 MB | CsvToolkit (`1.07x`) | CsvToolkit (`1.04x` lower) |
+| ReadTyped_SemicolonHighQuote | 10,000 | 4.623 ms / 0.99 MB | 5.129 ms / 3.76 MB | CsvToolkit (`1.11x`) | CsvToolkit (`3.79x` lower) |
+| ReadTyped_WithConverterOptions | 10,000 | 2.784 ms / 1.33 MB | 3.024 ms / 2.67 MB | CsvToolkit (`1.09x`) | CsvToolkit (`2.01x` lower) |
+| WriteTyped_WithConverterOptions | 10,000 | 2.188 ms / 2.39 MB | 2.346 ms / 2.46 MB | CsvToolkit (`1.07x`) | CsvToolkit (`1.03x` lower) |
+| ReadTyped_DuplicateHeader_NameIndex | 10,000 | 1.342 ms / 1.17 MB | 1.597 ms / 1.78 MB | CsvToolkit (`1.19x`) | CsvToolkit (`1.51x` lower) |
+| ReadTyped | 100,000 | 41.431 ms / 9.30 MB | 45.086 ms / 36.72 MB | CsvToolkit (`1.09x`) | CsvToolkit (`3.95x` lower) |
+| WriteTyped | 100,000 | 23.988 ms / 38.86 MB | 22.670 ms / 39.40 MB | CsvHelper (`1.06x`) | CsvToolkit (`1.01x` lower) |
+| ReadTyped_SemicolonHighQuote | 100,000 | 40.004 ms / 9.30 MB | 48.538 ms / 36.72 MB | CsvToolkit (`1.21x`) | CsvToolkit (`3.95x` lower) |
+| ReadTyped_WithConverterOptions | 100,000 | 26.408 ms / 12.80 MB | 27.290 ms / 25.81 MB | CsvToolkit (`1.03x`) | CsvToolkit (`2.02x` lower) |
+| WriteTyped_WithConverterOptions | 100,000 | 19.295 ms / 26.52 MB | 19.087 ms / 26.60 MB | CsvHelper (`1.01x`) | CsvToolkit (`~0.3%` lower) |
+| ReadTyped_DuplicateHeader_NameIndex | 100,000 | 13.088 ms / 12.23 MB | 13.932 ms / 17.64 MB | CsvToolkit (`1.06x`) | CsvToolkit (`1.44x` lower) |
+
+Additional dynamic-style scenario (`ReadDictionary` vs `ReadDynamic`, not strict API-equivalent):
+
+| Scenario | RowCount | CsvToolkit.Core (Mean / Alloc) | CsvHelper (Mean / Alloc) | Time | Allocation |
+|--------- |---------:|-------------------------------:|--------------------------:|-----:|-----------:|
+| ReadDictionary vs ReadDynamic | 10,000 | 2.583 ms / 5.26 MB | 4.257 ms / 8.00 MB | CsvToolkit (`1.65x` faster) | CsvToolkit (`1.52x` lower) |
+| ReadDictionary vs ReadDynamic | 100,000 | 27.228 ms / 52.64 MB | 42.923 ms / 79.41 MB | CsvToolkit (`1.58x` faster) | CsvToolkit (`1.51x` lower) |
 
 Observed trend from this run:
-- `CsvToolkit.Core` now leads key typed read scenarios (default, semicolon/high-quote, duplicate headers, and typed read with converter options).
-- `CsvToolkit.Core` keeps a large allocation advantage in typed reads (around `~3-4x` lower allocation in direct typed read benchmarks).
-- `CsvHelper` remains slightly faster in write throughput (`WriteTyped` and `WriteTyped_WithConverterOptions`) while allocation is comparable.
+- At `10k` rows, `CsvToolkit.Core` is faster and lower-allocation in all `6/6` paired scenarios.
+- At `100k` rows, `CsvToolkit.Core` is faster in `4/6` paired scenarios and lower-allocation in `6/6` paired scenarios.
+- Typed read paths keep the largest memory advantage (`~2x` to `~4x` lower allocation).
 
 Benchmark run time:
 - Benchmark execution: `00:08:46` (`526.66 sec`)
