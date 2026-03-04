@@ -3,6 +3,7 @@ using System.Text;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Order;
 using CsvHelper.Configuration;
+using CsvToolkit.Core.Mapping;
 
 namespace CsvToolkit.Core.Benchmarks;
 
@@ -16,14 +17,21 @@ public class CsvReadWriteBenchmarks
     private byte[] _csvDefaultUtf8 = [];
     private string _csvSemicolonQuoted = string.Empty;
     private byte[] _csvSemicolonQuotedUtf8 = [];
+    private ConverterOptionsRecord[] _converterRecords = [];
+    private string _csvConverterOptions = string.Empty;
+    private byte[] _csvConverterOptionsUtf8 = [];
+    private string _csvDuplicateHeaders = string.Empty;
+    private byte[] _csvDuplicateHeadersUtf8 = [];
+    private CsvMapRegistry _duplicateHeadersMapRegistry = new();
 
-    [Params(100_000)] public int RowCount { get; set; }
+    [Params(10_000, 100_000)] public int RowCount { get; set; }
 
     [GlobalSetup]
     public void Setup()
     {
         var random = new Random(42);
         _records = new BenchmarkRecord[RowCount];
+        _converterRecords = new ConverterOptionsRecord[RowCount];
 
         for (var i = 0; i < RowCount; i++)
         {
@@ -37,6 +45,14 @@ public class CsvReadWriteBenchmarks
                 CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddMinutes(i),
                 IsActive = i % 2 == 0
             };
+
+            _converterRecords[i] = new ConverterOptionsRecord
+            {
+                Id = i + 1,
+                Flag = i % 2 == 0,
+                Created = new DateTime(2025, 1, 1).AddDays(i % 365),
+                Score = i % 10 == 0 ? null : (i * 7) % 1000
+            };
         }
 
         _csvDefault = GenerateCsv(_records, ',', quoteFrequency: 0.1, newLine: "\n");
@@ -44,6 +60,20 @@ public class CsvReadWriteBenchmarks
 
         _csvSemicolonQuoted = GenerateCsv(_records, ';', quoteFrequency: 0.7, newLine: "\n");
         _csvSemicolonQuotedUtf8 = Encoding.UTF8.GetBytes(_csvSemicolonQuoted);
+
+        _csvConverterOptions = GenerateConverterOptionsCsv(_converterRecords, "\n");
+        _csvConverterOptionsUtf8 = Encoding.UTF8.GetBytes(_csvConverterOptions);
+
+        _csvDuplicateHeaders = GenerateDuplicateHeadersCsv(RowCount, "\n");
+        _csvDuplicateHeadersUtf8 = Encoding.UTF8.GetBytes(_csvDuplicateHeaders);
+
+        _duplicateHeadersMapRegistry = new CsvMapRegistry();
+        _duplicateHeadersMapRegistry.Register<DuplicateHeaderRecord>(map =>
+        {
+            map.Map(x => x.FirstName).Name("name").NameIndex(0);
+            map.Map(x => x.LastName).Name("name").NameIndex(1);
+            map.Map(x => x.Age).Name("age");
+        });
     }
 
     [Benchmark(Baseline = true)]
@@ -215,6 +245,161 @@ public class CsvReadWriteBenchmarks
         return count;
     }
 
+    [Benchmark]
+    public int CsvToolkitCore_ReadTyped_WithConverterOptions_Stream()
+    {
+        using var stream = new MemoryStream(_csvConverterOptionsUtf8, writable: false);
+        var options = new CsvOptions
+        {
+            HasHeader = true,
+            CultureInfo = CultureInfo.InvariantCulture
+        };
+        options.ConverterOptions.Configure<bool>(o => o.AddTrueValues("Y").AddFalseValues("N"));
+        options.ConverterOptions.Configure<DateTime>(o => o.AddFormats("dd-MM-yyyy"));
+        options.ConverterOptions.Configure<int?>(o => o.AddNullValues("NULL"));
+        using var reader = new CsvReader(stream, options);
+
+        var count = 0;
+        while (reader.TryReadRecord<ConverterOptionsRecord>(out _))
+        {
+            count++;
+        }
+
+        return count;
+    }
+
+    [Benchmark]
+    public int CsvHelper_ReadTyped_WithConverterOptions_Stream()
+    {
+        using var stream = new MemoryStream(_csvConverterOptionsUtf8, writable: false);
+        using var textReader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: false,
+            bufferSize: 16 * 1024, leaveOpen: false);
+        using var csv = new CsvHelper.CsvReader(textReader, new CsvConfiguration(CultureInfo.InvariantCulture)
+        {
+            HasHeaderRecord = true,
+            Delimiter = ","
+        });
+
+        var booleanOptions = csv.Context.TypeConverterOptionsCache.GetOptions<bool>();
+        booleanOptions.BooleanTrueValues.Add("Y");
+        booleanOptions.BooleanFalseValues.Add("N");
+
+        var dateOptions = csv.Context.TypeConverterOptionsCache.GetOptions<DateTime>();
+        dateOptions.Formats = ["dd-MM-yyyy"];
+
+        var nullableIntOptions = csv.Context.TypeConverterOptionsCache.GetOptions<int?>();
+        nullableIntOptions.NullValues.Add("NULL");
+
+        var count = 0;
+        foreach (var _ in csv.GetRecords<ConverterOptionsRecord>())
+        {
+            count++;
+        }
+
+        return count;
+    }
+
+    [Benchmark]
+    public long CsvToolkitCore_WriteTyped_WithConverterOptions_Stream()
+    {
+        using var stream = new MemoryStream();
+        var options = new CsvOptions
+        {
+            HasHeader = true,
+            NewLine = "\n",
+            CultureInfo = CultureInfo.InvariantCulture
+        };
+        options.ConverterOptions.Configure<bool>(o => o.AddTrueValues("Y").AddFalseValues("N"));
+        options.ConverterOptions.Configure<DateTime>(o => o.AddFormats("dd-MM-yyyy"));
+        options.ConverterOptions.Configure<int?>(o => o.AddNullValues("NULL"));
+        using var writer = new CsvWriter(stream, options);
+
+        writer.WriteHeader<ConverterOptionsRecord>();
+        foreach (var record in _converterRecords)
+        {
+            writer.WriteRecord(record);
+        }
+
+        writer.Flush();
+        return stream.Length;
+    }
+
+    [Benchmark]
+    public long CsvHelper_WriteTyped_WithConverterOptions_Stream()
+    {
+        using var stream = new MemoryStream();
+        using var textWriter = new StreamWriter(stream, Encoding.UTF8, 16 * 1024, leaveOpen: true);
+        using var csv = new CsvHelper.CsvWriter(textWriter, new CsvConfiguration(CultureInfo.InvariantCulture)
+        {
+            HasHeaderRecord = true,
+            Delimiter = ",",
+            NewLine = "\n"
+        });
+
+        var booleanOptions = csv.Context.TypeConverterOptionsCache.GetOptions<bool>();
+        booleanOptions.BooleanTrueValues.Add("Y");
+        booleanOptions.BooleanFalseValues.Add("N");
+
+        var dateOptions = csv.Context.TypeConverterOptionsCache.GetOptions<DateTime>();
+        dateOptions.Formats = ["dd-MM-yyyy"];
+
+        var nullableIntOptions = csv.Context.TypeConverterOptionsCache.GetOptions<int?>();
+        nullableIntOptions.NullValues.Add("NULL");
+
+        csv.WriteHeader<ConverterOptionsRecord>();
+        csv.NextRecord();
+
+        foreach (var record in _converterRecords)
+        {
+            csv.WriteRecord(record);
+            csv.NextRecord();
+        }
+
+        textWriter.Flush();
+        return stream.Length;
+    }
+
+    [Benchmark]
+    public int CsvToolkitCore_ReadTyped_DuplicateHeader_NameIndex_Stream()
+    {
+        using var stream = new MemoryStream(_csvDuplicateHeadersUtf8, writable: false);
+        using var reader = new CsvReader(stream, new CsvOptions
+        {
+            HasHeader = true,
+            CultureInfo = CultureInfo.InvariantCulture
+        }, _duplicateHeadersMapRegistry);
+
+        var count = 0;
+        while (reader.TryReadRecord<DuplicateHeaderRecord>(out _))
+        {
+            count++;
+        }
+
+        return count;
+    }
+
+    [Benchmark]
+    public int CsvHelper_ReadTyped_DuplicateHeader_NameIndex_Stream()
+    {
+        using var stream = new MemoryStream(_csvDuplicateHeadersUtf8, writable: false);
+        using var textReader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: false,
+            bufferSize: 16 * 1024, leaveOpen: false);
+        using var csv = new CsvHelper.CsvReader(textReader, new CsvConfiguration(CultureInfo.InvariantCulture)
+        {
+            HasHeaderRecord = true,
+            Delimiter = ","
+        });
+        csv.Context.RegisterClassMap<CsvHelperDuplicateHeaderRecordMap>();
+
+        var count = 0;
+        foreach (var _ in csv.GetRecords<DuplicateHeaderRecord>())
+        {
+            count++;
+        }
+
+        return count;
+    }
+
     private static string GenerateCsv(IEnumerable<BenchmarkRecord> records, char delimiter, double quoteFrequency,
         string newLine)
     {
@@ -274,6 +459,46 @@ public class CsvReadWriteBenchmarks
         builder.Append('"');
     }
 
+    private static string GenerateConverterOptionsCsv(IEnumerable<ConverterOptionsRecord> records, string newLine)
+    {
+        var builder = new StringBuilder(capacity: 32 * 1024);
+        builder.Append("Id,Flag,Created,Score").Append(newLine);
+
+        foreach (var record in records)
+        {
+            builder.Append(record.Id.ToString(CultureInfo.InvariantCulture)).Append(',')
+                .Append(record.Flag ? "Y" : "N").Append(',')
+                .Append(record.Created.ToString("dd-MM-yyyy", CultureInfo.InvariantCulture)).Append(',')
+                .Append(record.Score?.ToString(CultureInfo.InvariantCulture) ?? "NULL")
+                .Append(newLine);
+        }
+
+        return builder.ToString();
+    }
+
+    private static string GenerateDuplicateHeadersCsv(int rowCount, string newLine)
+    {
+        var random = new Random(7);
+        var builder = new StringBuilder(capacity: 32 * 1024);
+        builder.Append("name,name,age").Append(newLine);
+
+        for (var i = 0; i < rowCount; i++)
+        {
+            var firstName = random.NextDouble() < 0.1 ? $"First,{i}" : $"First{i}";
+            var lastName = random.NextDouble() < 0.1 ? $"Last,{i}" : $"Last{i}";
+            var age = 18 + (i % 60);
+
+            AppendValue(builder, firstName, ',', random, quoteFrequency: 0.2);
+            builder.Append(',');
+            AppendValue(builder, lastName, ',', random, quoteFrequency: 0.2);
+            builder.Append(',');
+            builder.Append(age.ToString(CultureInfo.InvariantCulture));
+            builder.Append(newLine);
+        }
+
+        return builder.ToString();
+    }
+
     private sealed class BenchmarkRecord
     {
         public int Id { get; set; }
@@ -285,5 +510,35 @@ public class CsvReadWriteBenchmarks
         public DateTime CreatedAt { get; set; }
 
         public bool IsActive { get; set; }
+    }
+
+    private sealed class ConverterOptionsRecord
+    {
+        public int Id { get; set; }
+
+        public bool Flag { get; set; }
+
+        public DateTime Created { get; set; }
+
+        public int? Score { get; set; }
+    }
+
+    private sealed class DuplicateHeaderRecord
+    {
+        public string FirstName { get; set; } = string.Empty;
+
+        public string LastName { get; set; } = string.Empty;
+
+        public int Age { get; set; }
+    }
+
+    private sealed class CsvHelperDuplicateHeaderRecordMap : ClassMap<DuplicateHeaderRecord>
+    {
+        public CsvHelperDuplicateHeaderRecordMap()
+        {
+            Map(x => x.FirstName).Name("name").NameIndex(0);
+            Map(x => x.LastName).Name("name").NameIndex(1);
+            Map(x => x.Age).Name("age");
+        }
     }
 }

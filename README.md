@@ -72,12 +72,14 @@ await writer.WriteRecordAsync(new MyRow());
 - Trim options and strict/lenient error handling with callback context
 - Field access as `ReadOnlySpan<char>` / `ReadOnlyMemory<char>`
 - POCO mapping with:
-  - Attributes: `[CsvColumn]`, `[CsvIndex]`, `[CsvIgnore]`
-  - Fluent mapping: `CsvMapRegistry.Register<T>(...)`
+  - Attributes: `[CsvColumn]`, `[CsvIndex]`, `[CsvIgnore]`, `[CsvNameIndex]`, `[CsvOptional]`, `[CsvDefault]`, `[CsvConstant]`, `[CsvValidate]`
+  - Converter option attributes: `[CsvNullValues]`, `[CsvTrueValues]`, `[CsvFalseValues]`, `[CsvFormats]`, `[CsvNumberStyles]`, `[CsvDateTimeStyles]`, `[CsvCulture]`
+  - Fluent mapping: `CsvMapRegistry.Register<T>(...)` with `Optional`, `Default`, `Constant`, `Validate`, `NameIndex`, member converter options
 - Type conversion:
   - primitives, enums, nullable, `DateTime`, `DateOnly`, `TimeOnly`, `Guid`
   - culture-aware parsing/formatting
   - custom converters (`ICsvTypeConverter<T>`)
+  - global converter options per type via `CsvOptions.ConverterOptions`
 - Async read/write entry points
 
 ## Examples
@@ -124,14 +126,63 @@ maps.Register<Person>(map =>
 });
 ```
 
+### Attribute Mapping and Converter Options
+
+```csharp
+public sealed class PersonRow
+{
+    [CsvColumn("name"), CsvNameIndex(0)]
+    public string FirstName { get; set; } = string.Empty;
+
+    [CsvColumn("name"), CsvNameIndex(1)]
+    public string LastName { get; set; } = string.Empty;
+
+    [CsvOptional, CsvDefault(18)]
+    public int Age { get; set; }
+
+    [CsvConstant("US")]
+    public string Country { get; set; } = string.Empty;
+
+    [CsvValidate(nameof(IsValidAge), Message = "Age must be >= 0.")]
+    public int CheckedAge { get; set; }
+
+    [CsvTrueValues("Y"), CsvFalseValues("N")]
+    public bool Active { get; set; }
+
+    [CsvFormats("dd-MM-yyyy"), CsvCulture("en-GB")]
+    public DateTime CreatedAt { get; set; }
+
+    [CsvNullValues("NULL")]
+    public decimal? Score { get; set; }
+
+    private static bool IsValidAge(int value) => value >= 0;
+}
+```
+
+### Converter Option Precedence
+
+For read/write conversion options, resolution order is:
+
+1. Member-level fluent options (`map.Map(...).TrueValues(...).Formats(...)`)
+2. Member-level attribute options (`[CsvTrueValues]`, `[CsvFormats]`, etc.)
+3. Global type options (`options.ConverterOptions.Configure<T>(...)`)
+4. Built-in defaults
+
+Notes:
+- Fluent member options override attribute options for the same member.
+- Attribute/member options are isolated to that mapped member and do not affect other properties of the same type.
+- `ConverterOptions` precedence applies to both `CsvReader` and `CsvWriter`.
+
 ## Benchmarks
 
 Benchmarks compare `CsvToolkit.Core` with `CsvHelper` for:
 
-- Typed read (`100k` rows)
+- Typed read/write (default mapping)
+- Typed read/write with converter options
+- Typed read with duplicate headers (`NameIndex`)
 - Dictionary/dynamic read
-- Typed write
 - Semicolon + high quoting parse
+- Dataset sizes: `10k` and `100k` rows
 
 ### Technical Docs
 
@@ -164,31 +215,39 @@ Benchmark dataset generation is deterministic (`Random` seed-based) inside bench
 
 ### Latest Results
 
-Run date: `2026-03-03`  
-Machine: `Apple M3 Pro`  
+Run date: `2026-03-04`  
+Machine: `Apple M3 Pro` (`11` logical / `11` physical cores)  
+OS: `macOS Tahoe 26.3 (Darwin 25.3.0)`  
 Runtime: `.NET 10.0.0`  
 Command: `dotnet run -c Release --project benchmarks/CsvToolkit.Benchmarks -- --filter "*CsvReadWriteBenchmarks*"`
 
-| Method                                      | RowCount | Mean     | Error    | StdDev   | Ratio | Gen0      | Gen1     | Gen2     | Allocated | Alloc Ratio |
-|-------------------------------------------- |--------- |---------:|---------:|---------:|------:|----------:|---------:|---------:|----------:|------------:|
-| CsvToolkitCore_WriteTyped_Stream            | 100000   | 22.52 ms | 0.403 ms | 0.377 ms |  0.46 | 3250.0000 | 406.2500 | 375.0000 |  38.86 MB |        2.02 |
-| CsvHelper_WriteTyped_Stream                 | 100000   | 23.99 ms | 0.169 ms | 0.150 ms |  0.48 | 3281.2500 | 656.2500 | 343.7500 |  39.41 MB |        2.05 |
-| CsvToolkitCore_ReadDictionary_Stream        | 100000   | 25.91 ms | 0.098 ms | 0.076 ms |  0.52 | 6593.7500 |        - |        - |  52.64 MB |        2.74 |
-| CsvHelper_ReadDynamic_Stream                | 100000   | 42.88 ms | 0.164 ms | 0.153 ms |  0.87 | 9916.6667 | 250.0000 |        - |  79.41 MB |        4.14 |
-| CsvHelper_ReadTyped_Stream                  | 100000   | 45.54 ms | 0.367 ms | 0.325 ms |  0.92 | 4545.4545 | 181.8182 |        - |  36.72 MB |        1.91 |
-| CsvToolkitCore_ReadTyped_SemicolonHighQuote | 100000   | 47.70 ms | 0.679 ms | 0.635 ms |  0.96 | 2363.6364 |        - |        - |   19.2 MB |        1.00 |
-| CsvHelper_ReadTyped_SemicolonHighQuote      | 100000   | 49.05 ms | 0.135 ms | 0.120 ms |  0.99 | 4600.0000 | 200.0000 |        - |  36.72 MB |        1.91 |
-| CsvToolkitCore_ReadTyped_Stream             | 100000   | 49.49 ms | 0.422 ms | 0.395 ms |  1.00 | 2363.6364 |        - |        - |   19.2 MB |        1.00 |
+Top-line results (`RowCount = 100000`):
 
-Outlier hints:
-- `CsvHelper_WriteTyped_Stream`: 1 outlier removed (`25.78 ms`)
-- `CsvToolkitCore_ReadDictionary_Stream`: 3 outliers removed (`26.21 ms..28.93 ms`)
-- `CsvHelper_ReadTyped_Stream`: 1 outlier removed (`46.74 ms`)
-- `CsvHelper_ReadTyped_SemicolonHighQuote`: 1 outlier removed (`50.79 ms`)
+| Method                                                    | Mean      | Allocated |
+|---------------------------------------------------------- |----------:|----------:|
+| CsvHelper_ReadTyped_DuplicateHeader_NameIndex_Stream      | 14.915 ms |  17.64 MB |
+| CsvHelper_WriteTyped_WithConverterOptions_Stream          | 20.558 ms |   26.6 MB |
+| CsvToolkitCore_ReadTyped_DuplicateHeader_NameIndex_Stream | 20.782 ms |   14.5 MB |
+| CsvHelper_WriteTyped_Stream                               | 24.595 ms |   39.4 MB |
+| CsvToolkitCore_ReadDictionary_Stream                      | 27.158 ms |  52.64 MB |
+| CsvToolkitCore_WriteTyped_Stream                          | 27.503 ms |  38.86 MB |
+| CsvToolkitCore_WriteTyped_WithConverterOptions_Stream     | 27.535 ms |  29.27 MB |
+| CsvHelper_ReadTyped_WithConverterOptions_Stream           | 27.923 ms |  25.81 MB |
+| CsvToolkitCore_ReadTyped_WithConverterOptions_Stream      | 39.036 ms |  15.54 MB |
+| CsvHelper_ReadDynamic_Stream                              | 45.534 ms |  79.41 MB |
+| CsvHelper_ReadTyped_Stream                                | 46.115 ms |  36.72 MB |
+| CsvHelper_ReadTyped_SemicolonHighQuote                    | 50.544 ms |  36.72 MB |
+| CsvToolkitCore_ReadTyped_SemicolonHighQuote               | 54.435 ms |   19.2 MB |
+| CsvToolkitCore_ReadTyped_Stream                           | 56.497 ms |   19.2 MB |
+
+Observed trend from this run:
+- `CsvToolkit.Core` generally allocates less memory in typed read scenarios.
+- `CsvHelper` currently leads on typed throughput in most scenarios.
+- Converter-options and duplicate-header cases show the same tradeoff: lower allocation in `CsvToolkit.Core`, faster execution in `CsvHelper`.
 
 Benchmark run time:
-- Benchmark execution: `00:02:29` (`149.52 sec`)
-- Global total: `00:02:33` (`153.73 sec`)
+- Benchmark execution: `00:11:01` (`661.2 sec`)
+- Global total: `00:11:06` (`666.61 sec`)
 
 Raw benchmark artifacts:
 - `BenchmarkDotNet.Artifacts/results/CsvToolkit.Core.Benchmarks.CsvReadWriteBenchmarks-report-github.md`
