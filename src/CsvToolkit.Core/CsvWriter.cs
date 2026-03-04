@@ -209,7 +209,18 @@ public sealed class CsvWriter : IDisposable, IAsyncDisposable
                 continue;
             }
 
-            var value = member.Getter(boxed);
+            var value = member.HasConstant ? member.ConstantValue : member.Getter(boxed);
+            if (value is null && member.HasDefault)
+            {
+                value = member.DefaultValue;
+            }
+
+            if (member.Validation is not null && !member.Validation(value))
+            {
+                var message = member.ValidationMessage ?? $"Validation failed for member '{member.Name}'.";
+                throw new InvalidOperationException(message);
+            }
+
             if (member.Converter is not null)
             {
                 var context = new CsvConverterContext(Options.CultureInfo, RowIndex, _fieldIndex, member.Name);
@@ -249,7 +260,18 @@ public sealed class CsvWriter : IDisposable, IAsyncDisposable
                 continue;
             }
 
-            var value = member.Getter(boxed);
+            var value = member.HasConstant ? member.ConstantValue : member.Getter(boxed);
+            if (value is null && member.HasDefault)
+            {
+                value = member.DefaultValue;
+            }
+
+            if (member.Validation is not null && !member.Validation(value))
+            {
+                var message = member.ValidationMessage ?? $"Validation failed for member '{member.Name}'.";
+                throw new InvalidOperationException(message);
+            }
+
             if (member.Converter is not null)
             {
                 var context = new CsvConverterContext(Options.CultureInfo, RowIndex, _fieldIndex, member.Name);

@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Diagnostics.CodeAnalysis;
 using System.Dynamic;
+using System.Reflection;
 using CsvToolkit.Core.Internal;
 using CsvToolkit.Core.Mapping;
 using CsvToolkit.Core.TypeConversion;
@@ -15,13 +16,15 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
     private readonly CsvParser _parser;
     private readonly CsvMapRegistry _mapRegistry;
     private readonly Dictionary<Type, int[]> _memberIndexCache = new();
+    private readonly Dictionary<Type, CsvConstructorBinding?> _constructorBindingCache = new();
     private bool _headerInitialized;
     private string[]? _headers;
-    private Dictionary<string, int>? _headerLookup;
+    private Dictionary<string, int[]>? _headerLookup;
     private string[] _generatedColumnNames = [];
     private int? _expectedColumnCount;
 
-    public CsvReader(TextReader reader, CsvOptions? options = null, CsvMapRegistry? mapRegistry = null, bool leaveOpen = false)
+    public CsvReader(TextReader reader, CsvOptions? options = null, CsvMapRegistry? mapRegistry = null,
+        bool leaveOpen = false)
     {
         if (reader is null)
         {
@@ -34,7 +37,8 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
         _parser = new CsvParser(new TextReaderInput(reader, leaveOpen), Options);
     }
 
-    public CsvReader(Stream stream, CsvOptions? options = null, CsvMapRegistry? mapRegistry = null, bool leaveOpen = false)
+    public CsvReader(Stream stream, CsvOptions? options = null, CsvMapRegistry? mapRegistry = null,
+        bool leaveOpen = false)
     {
         if (stream is null)
         {
@@ -114,7 +118,8 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
         return true;
     }
 
-    public async ValueTask<Dictionary<string, string?>?> ReadDictionaryAsync(CancellationToken cancellationToken = default)
+    public async ValueTask<Dictionary<string, string?>?> ReadDictionaryAsync(
+        CancellationToken cancellationToken = default)
     {
         if (!await ReadAsync(cancellationToken).ConfigureAwait(false))
         {
@@ -142,7 +147,7 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
         return true;
     }
 
-    public bool TryReadRecord<T>([NotNullWhen(true)] out T? record) where T : new()
+    public bool TryReadRecord<T>([NotNullWhen(true)] out T? record)
     {
         if (!TryReadRow(out _))
         {
@@ -154,7 +159,7 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
         return true;
     }
 
-    public async ValueTask<T?> ReadRecordAsync<T>(CancellationToken cancellationToken = default) where T : new()
+    public async ValueTask<T?> ReadRecordAsync<T>(CancellationToken cancellationToken = default)
     {
         if (!await ReadAsync(cancellationToken).ConfigureAwait(false))
         {
@@ -164,19 +169,23 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
         return GetRecord<T>();
     }
 
-    public T GetRecord<T>() where T : new()
+    public T GetRecord<T>()
     {
-        if (CurrentRow.FieldCount == 0)
-        {
-            return new T();
-        }
-
         var type = typeof(T);
         var map = _mapRegistry.GetOrCreate(type);
         var indices = ResolveFieldIndices(map);
+        var constructorBoundMembers = Array.Empty<bool>();
+        object boxed;
 
-        var record = new T();
-        object boxed = record;
+        var constructorBinding = GetConstructorBinding(map);
+        if (constructorBinding is not null)
+        {
+            boxed = CreateRecordUsingConstructor(map, constructorBinding, indices, out constructorBoundMembers);
+        }
+        else
+        {
+            boxed = CreateRecordWithDefaultConstructor(type);
+        }
 
         for (var i = 0; i < map.Members.Length; i++)
         {
@@ -186,24 +195,14 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
                 continue;
             }
 
+            if (constructorBoundMembers.Length != 0 && constructorBoundMembers[i])
+            {
+                continue;
+            }
+
             var fieldIndex = indices[i];
-            if (fieldIndex < 0)
+            if (!TryResolveMemberValue(member, fieldIndex, out var converted, out var valueMemory))
             {
-                HandleBadData(-1, $"No matching column for member '{member.Name}'.", ReadOnlyMemory<char>.Empty);
-                continue;
-            }
-
-            if (fieldIndex >= CurrentRow.FieldCount)
-            {
-                HandleBadData(fieldIndex, $"Missing field for member '{member.Name}'.", ReadOnlyMemory<char>.Empty);
-                continue;
-            }
-
-            var valueMemory = CurrentRow.GetFieldMemory(fieldIndex);
-            var context = new CsvConverterContext(Options.CultureInfo, CurrentRow.RowIndex, fieldIndex, member.Name);
-            if (!CsvValueConverter.TryConvert(valueMemory.Span, member.PropertyType, Options, member.Converter, context, out var converted))
-            {
-                HandleBadData(fieldIndex, $"Failed to convert field '{member.Name}'.", valueMemory);
                 continue;
             }
 
@@ -227,7 +226,7 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
 
     public void Dispose()
     {
-        _parser.Dispose(); 
+        _parser.Dispose();
     }
 
     public ValueTask DisposeAsync()
@@ -308,12 +307,24 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
         _memberIndexCache.Clear();
     }
 
-    private Dictionary<string, int> BuildHeaderLookup(IReadOnlyList<string> headers)
+    private Dictionary<string, int[]> BuildHeaderLookup(IReadOnlyList<string> headers)
     {
-        var lookup = new Dictionary<string, int>(headers.Count, Options.HeaderComparer);
+        var grouped = new Dictionary<string, List<int>>(headers.Count, Options.HeaderComparer);
         for (var i = 0; i < headers.Count; i++)
         {
-            lookup.TryAdd(headers[i], i);
+            if (!grouped.TryGetValue(headers[i], out var indices))
+            {
+                indices = [];
+                grouped[headers[i]] = indices;
+            }
+
+            indices.Add(i);
+        }
+
+        var lookup = new Dictionary<string, int[]>(grouped.Count, Options.HeaderComparer);
+        foreach (var pair in grouped)
+        {
+            lookup[pair.Key] = pair.Value.ToArray();
         }
 
         return lookup;
@@ -388,7 +399,7 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
             for (var i = 0; i < map.Members.Length; i++)
             {
                 var member = map.Members[i];
-                if (member.Ignore || member.Setter is null || !member.Index.HasValue)
+                if (member.Ignore || !member.Index.HasValue)
                 {
                     continue;
                 }
@@ -403,7 +414,7 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
         {
             var member = map.Members[i];
 
-            if (member.Ignore || member.Setter is null)
+            if (member.Ignore)
             {
                 indices[i] = -1;
                 continue;
@@ -415,10 +426,14 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
                 continue;
             }
 
-            if (_headerLookup is not null && _headerLookup.TryGetValue(member.Name, out var headerIndex))
+            if (_headerLookup is not null && _headerLookup.TryGetValue(member.Name, out var headerIndices))
             {
-                indices[i] = headerIndex;
-                continue;
+                var nameIndex = member.NameIndex ?? 0;
+                if (nameIndex >= 0 && nameIndex < headerIndices.Length)
+                {
+                    indices[i] = headerIndices[nameIndex];
+                    continue;
+                }
             }
 
             if (_headerLookup is not null)
@@ -439,6 +454,270 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
 
         _memberIndexCache[map.RecordType] = indices;
         return indices;
+    }
+
+    private bool TryResolveMemberValue(
+        Mapping.CsvPropertyMap member,
+        int fieldIndex,
+        out object? converted,
+        out ReadOnlyMemory<char> valueMemory)
+    {
+        valueMemory = ReadOnlyMemory<char>.Empty;
+        converted = null;
+
+        if (member.HasConstant)
+        {
+            converted = member.ConstantValue;
+            return ValidateMemberValue(member, fieldIndex, ref converted, valueMemory);
+        }
+
+        if (fieldIndex < 0)
+        {
+            if (member.HasDefault)
+            {
+                converted = member.DefaultValue;
+                return ValidateMemberValue(member, -1, ref converted, valueMemory);
+            }
+
+            if (member.Optional)
+            {
+                return false;
+            }
+
+            HandleBadData(-1, $"No matching column for member '{member.Name}'.", ReadOnlyMemory<char>.Empty);
+            return false;
+        }
+
+        if (fieldIndex >= CurrentRow.FieldCount)
+        {
+            if (member.HasDefault)
+            {
+                converted = member.DefaultValue;
+                return ValidateMemberValue(member, fieldIndex, ref converted, valueMemory);
+            }
+
+            if (member.Optional)
+            {
+                return false;
+            }
+
+            HandleBadData(fieldIndex, $"Missing field for member '{member.Name}'.", ReadOnlyMemory<char>.Empty);
+            return false;
+        }
+
+        valueMemory = CurrentRow.GetFieldMemory(fieldIndex);
+        var context = new CsvConverterContext(Options.CultureInfo, CurrentRow.RowIndex, fieldIndex, member.Name);
+        if (!CsvValueConverter.TryConvert(valueMemory.Span, member.PropertyType, Options, member.Converter, context,
+                out converted))
+        {
+            if (member.HasDefault)
+            {
+                converted = member.DefaultValue;
+                return ValidateMemberValue(member, fieldIndex, ref converted, valueMemory);
+            }
+
+            if (member.Optional)
+            {
+                return false;
+            }
+
+            HandleBadData(fieldIndex, $"Failed to convert field '{member.Name}'.", valueMemory);
+            return false;
+        }
+
+        return ValidateMemberValue(member, fieldIndex, ref converted, valueMemory);
+    }
+
+    private bool ValidateMemberValue(
+        Mapping.CsvPropertyMap member,
+        int fieldIndex,
+        ref object? converted,
+        ReadOnlyMemory<char> valueMemory)
+    {
+        if (member.Validation is null || member.Validation(converted))
+        {
+            return true;
+        }
+
+        if (member.HasDefault && member.Validation(member.DefaultValue))
+        {
+            converted = member.DefaultValue;
+            return true;
+        }
+
+        var validationMessage = member.ValidationMessage ?? $"Validation failed for member '{member.Name}'.";
+        HandleBadData(fieldIndex < 0 ? -1 : fieldIndex, validationMessage, valueMemory);
+        return false;
+    }
+
+    private object CreateRecordUsingConstructor(
+        Mapping.CsvTypeMap map,
+        CsvConstructorBinding constructorBinding,
+        int[] indices,
+        out bool[] constructorBoundMembers)
+    {
+        var parameters = constructorBinding.Constructor.GetParameters();
+        var args = new object?[parameters.Length];
+        constructorBoundMembers = new bool[map.Members.Length];
+
+        for (var i = 0; i < parameters.Length; i++)
+        {
+            var memberIndex = constructorBinding.MemberIndices[i];
+            if (memberIndex >= 0)
+            {
+                var member = map.Members[memberIndex];
+                var fieldIndex = indices[memberIndex];
+                if (TryResolveMemberValue(member, fieldIndex, out var value, out _))
+                {
+                    args[i] = value;
+                }
+                else if (constructorBinding.ParameterHasDefaultValue[i])
+                {
+                    args[i] = constructorBinding.ParameterDefaultValues[i];
+                }
+                else
+                {
+                    args[i] = GetDefaultValue(parameters[i].ParameterType);
+                }
+
+                constructorBoundMembers[memberIndex] = true;
+                continue;
+            }
+
+            if (constructorBinding.ParameterHasDefaultValue[i])
+            {
+                args[i] = constructorBinding.ParameterDefaultValues[i];
+                continue;
+            }
+
+            args[i] = GetDefaultValue(parameters[i].ParameterType);
+        }
+
+        try
+        {
+            return constructorBinding.Constructor.Invoke(args);
+        }
+        catch (TargetInvocationException ex)
+        {
+            throw new InvalidOperationException(
+                $"Failed to construct '{map.RecordType.Name}' from CSV values: {ex.InnerException?.Message ?? ex.Message}",
+                ex.InnerException ?? ex);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                $"Failed to construct '{map.RecordType.Name}' from CSV values: {ex.Message}",
+                ex);
+        }
+    }
+
+    private object CreateRecordWithDefaultConstructor(Type type)
+    {
+        try
+        {
+            return Activator.CreateInstance(type) ??
+                   throw new InvalidOperationException($"Failed to create instance of '{type.Name}'.");
+        }
+        catch (MissingMethodException ex)
+        {
+            throw new InvalidOperationException(
+                $"Type '{type.Name}' must have a public parameterless constructor or a bindable constructor.",
+                ex);
+        }
+    }
+
+    private CsvConstructorBinding? GetConstructorBinding(Mapping.CsvTypeMap map)
+    {
+        var type = map.RecordType;
+        if (_constructorBindingCache.TryGetValue(type, out var cached))
+        {
+            return cached;
+        }
+
+        if (type.GetConstructor(Type.EmptyTypes) is not null)
+        {
+            _constructorBindingCache[type] = null;
+            return null;
+        }
+
+        CsvConstructorBinding? binding = null;
+        var constructors = type.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
+            .OrderByDescending(static c => c.GetParameters().Length);
+
+        foreach (var constructor in constructors)
+        {
+            var parameters = constructor.GetParameters();
+            if (parameters.Length == 0)
+            {
+                continue;
+            }
+
+            var memberIndices = new int[parameters.Length];
+            var hasDefaults = new bool[parameters.Length];
+            var defaults = new object?[parameters.Length];
+            var valid = true;
+
+            for (var i = 0; i < parameters.Length; i++)
+            {
+                var parameter = parameters[i];
+                var memberIndex = FindMemberIndexByPropertyName(map, parameter.Name);
+                if (memberIndex >= 0)
+                {
+                    memberIndices[i] = memberIndex;
+                    continue;
+                }
+
+                memberIndices[i] = -1;
+                if (parameter.HasDefaultValue)
+                {
+                    hasDefaults[i] = true;
+                    defaults[i] = parameter.DefaultValue;
+                    continue;
+                }
+
+                valid = false;
+                break;
+            }
+
+            if (!valid)
+            {
+                continue;
+            }
+
+            binding = new CsvConstructorBinding(constructor, memberIndices, hasDefaults, defaults);
+            break;
+        }
+
+        _constructorBindingCache[type] = binding;
+        return binding;
+    }
+
+    private static int FindMemberIndexByPropertyName(Mapping.CsvTypeMap map, string? parameterName)
+    {
+        if (string.IsNullOrWhiteSpace(parameterName))
+        {
+            return -1;
+        }
+
+        for (var i = 0; i < map.Members.Length; i++)
+        {
+            if (string.Equals(map.Members[i].Property.Name, parameterName, StringComparison.OrdinalIgnoreCase))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private static object? GetDefaultValue(Type type)
+    {
+        if (!type.IsValueType)
+        {
+            return null;
+        }
+
+        return Activator.CreateInstance(type);
     }
 
     private string GetGeneratedColumnName(int index)
@@ -473,6 +752,22 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
             throw new CsvException(message, CurrentRow.RowIndex, CurrentRow.LineNumber, fieldIndex);
         }
 
-        Options.BadDataFound?.Invoke(new CsvBadDataContext(CurrentRow.RowIndex, CurrentRow.LineNumber, fieldIndex, message, rawField));
+        Options.BadDataFound?.Invoke(new CsvBadDataContext(CurrentRow.RowIndex, CurrentRow.LineNumber, fieldIndex,
+            message, rawField));
+    }
+
+    private sealed class CsvConstructorBinding(
+        ConstructorInfo constructor,
+        int[] memberIndices,
+        bool[] parameterHasDefaultValue,
+        object?[] parameterDefaultValues)
+    {
+        public ConstructorInfo Constructor { get; } = constructor;
+
+        public int[] MemberIndices { get; } = memberIndices;
+
+        public bool[] ParameterHasDefaultValue { get; } = parameterHasDefaultValue;
+
+        public object?[] ParameterDefaultValues { get; } = parameterDefaultValues;
     }
 }

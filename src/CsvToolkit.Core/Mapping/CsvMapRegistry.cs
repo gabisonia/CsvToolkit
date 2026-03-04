@@ -45,8 +45,16 @@ internal static class CsvTypeMapFactory
             {
                 Property = property,
                 Name = property.Name,
+                NameIndex = null,
                 Index = null,
                 Ignore = false,
+                Optional = false,
+                HasDefault = false,
+                DefaultValue = null,
+                HasConstant = false,
+                ConstantValue = null,
+                Validation = null,
+                ValidationMessage = null,
                 Getter = BuildGetter(type, property),
                 Setter = BuildSetter(type, property)
             };
@@ -73,6 +81,11 @@ internal static class CsvTypeMapFactory
                     map.Name = overrideConfig.Name;
                 }
 
+                if (overrideConfig.NameIndex.HasValue)
+                {
+                    map.NameIndex = overrideConfig.NameIndex;
+                }
+
                 if (overrideConfig.Index.HasValue)
                 {
                     map.Index = overrideConfig.Index;
@@ -81,6 +94,29 @@ internal static class CsvTypeMapFactory
                 if (overrideConfig.Ignore)
                 {
                     map.Ignore = true;
+                }
+
+                if (overrideConfig.Optional)
+                {
+                    map.Optional = true;
+                }
+
+                if (overrideConfig.HasDefault)
+                {
+                    map.HasDefault = true;
+                    map.DefaultValue = overrideConfig.DefaultValue;
+                }
+
+                if (overrideConfig.HasConstant)
+                {
+                    map.HasConstant = true;
+                    map.ConstantValue = overrideConfig.ConstantValue;
+                }
+
+                if (overrideConfig.Validation is not null)
+                {
+                    map.Validation = overrideConfig.Validation;
+                    map.ValidationMessage = overrideConfig.ValidationMessage;
                 }
 
                 if (overrideConfig.Converter is not null)
@@ -143,9 +179,25 @@ internal sealed class CsvPropertyMap
 
     public required string Name { get; set; }
 
+    public required int? NameIndex { get; set; }
+
     public required int? Index { get; set; }
 
     public required bool Ignore { get; set; }
+
+    public required bool Optional { get; set; }
+
+    public required bool HasDefault { get; set; }
+
+    public required object? DefaultValue { get; set; }
+
+    public required bool HasConstant { get; set; }
+
+    public required object? ConstantValue { get; set; }
+
+    public required Func<object?, bool>? Validation { get; set; }
+
+    public required string? ValidationMessage { get; set; }
 
     public IUntypedCsvTypeConverter? Converter { get; set; }
 

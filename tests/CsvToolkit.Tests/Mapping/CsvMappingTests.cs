@@ -202,6 +202,137 @@ public sealed class CsvMappingTests
         Assert.Equal(11, row.Second);
     }
 
+    [Fact]
+    public void FluentMapping_DuplicateHeaderName_UsesNameIndex()
+    {
+        // Arrange
+        const string csv = "name,name,age\nAda,Lovelace,36\n";
+        var maps = new CsvMapRegistry();
+        maps.Register<DuplicateNameRecord>(map =>
+        {
+            map.Map(x => x.FirstName).Name("name").NameIndex(0);
+            map.Map(x => x.LastName).Name("name").NameIndex(1);
+            map.Map(x => x.Age).Name("age");
+        });
+        using var reader = new CsvReader(new StringReader(csv), mapRegistry: maps);
+
+        // Act
+        var read = reader.Read();
+        var row = reader.GetRecord<DuplicateNameRecord>();
+
+        // Assert
+        Assert.True(read);
+        Assert.Equal("Ada", row.FirstName);
+        Assert.Equal("Lovelace", row.LastName);
+        Assert.Equal(36, row.Age);
+    }
+
+    [Fact]
+    public void FluentMapping_OptionalMember_MissingColumn_DoesNotThrow()
+    {
+        // Arrange
+        const string csv = "id\n1\n";
+        var maps = new CsvMapRegistry();
+        maps.Register<OptionalRecord>(map =>
+        {
+            map.Map(x => x.Missing).Name("missing").Optional();
+        });
+        using var reader = new CsvReader(new StringReader(csv), mapRegistry: maps);
+
+        // Act
+        var read = reader.Read();
+        var row = reader.GetRecord<OptionalRecord>();
+
+        // Assert
+        Assert.True(read);
+        Assert.Equal(1, row.Id);
+        Assert.Equal(0, row.Missing);
+    }
+
+    [Fact]
+    public void FluentMapping_DefaultValue_UsedWhenConversionFails()
+    {
+        // Arrange
+        const string csv = "id,score\n1,\n";
+        var maps = new CsvMapRegistry();
+        maps.Register<DefaultValueRecord>(map =>
+        {
+            map.Map(x => x.Score).Name("score").Default(99);
+        });
+        using var reader = new CsvReader(new StringReader(csv), mapRegistry: maps);
+
+        // Act
+        var read = reader.Read();
+        var row = reader.GetRecord<DefaultValueRecord>();
+
+        // Assert
+        Assert.True(read);
+        Assert.Equal(1, row.Id);
+        Assert.Equal(99, row.Score);
+    }
+
+    [Fact]
+    public void FluentMapping_ConstantValue_OverridesInput()
+    {
+        // Arrange
+        const string csv = "id,country\n1,FR\n";
+        var maps = new CsvMapRegistry();
+        maps.Register<ConstantValueRecord>(map =>
+        {
+            map.Map(x => x.Country).Name("country").Constant("US");
+        });
+        using var reader = new CsvReader(new StringReader(csv), mapRegistry: maps);
+
+        // Act
+        var read = reader.Read();
+        var row = reader.GetRecord<ConstantValueRecord>();
+
+        // Assert
+        Assert.True(read);
+        Assert.Equal(1, row.Id);
+        Assert.Equal("US", row.Country);
+    }
+
+    [Fact]
+    public void FluentMapping_Validate_ThrowsInStrictMode()
+    {
+        // Arrange
+        const string csv = "id,age\n1,15\n";
+        var maps = new CsvMapRegistry();
+        maps.Register<ValidationRecord>(map =>
+        {
+            map.Map(x => x.Age).Name("age").Validate(age => age >= 18, "Age must be at least 18.");
+        });
+        using var reader = new CsvReader(new StringReader(csv), mapRegistry: maps);
+
+        // Act
+        var read = reader.Read();
+        Action act = () => reader.GetRecord<ValidationRecord>();
+
+        // Assert
+        Assert.True(read);
+        var exception = Assert.Throws<CsvException>(act);
+        Assert.Equal("Age must be at least 18.", exception.Message);
+    }
+
+    [Fact]
+    public void ConstructorMapping_ReadsTypeWithoutParameterlessConstructor()
+    {
+        // Arrange
+        const string csv = "id,name,age\n1,Ada,36\n";
+        using var reader = new CsvReader(new StringReader(csv));
+
+        // Act
+        var read = reader.Read();
+        var row = reader.GetRecord<ImmutableCtorRecord>();
+
+        // Assert
+        Assert.True(read);
+        Assert.Equal(1, row.Id);
+        Assert.Equal("Ada", row.Name);
+        Assert.Equal(36, row.Age);
+    }
+
     private sealed class UpperCaseStringConverter : ICsvTypeConverter<string>
     {
         public bool TryParse(ReadOnlySpan<char> source, in CsvConverterContext context, out string value)
@@ -318,5 +449,58 @@ public sealed class CsvMappingTests
         public int First { get; set; }
 
         public int Second { get; set; }
+    }
+
+    private sealed class DuplicateNameRecord
+    {
+        public string FirstName { get; set; } = string.Empty;
+
+        public string LastName { get; set; } = string.Empty;
+
+        public int Age { get; set; }
+    }
+
+    private sealed class OptionalRecord
+    {
+        public int Id { get; set; }
+
+        public int Missing { get; set; }
+    }
+
+    private sealed class DefaultValueRecord
+    {
+        public int Id { get; set; }
+
+        public int Score { get; set; }
+    }
+
+    private sealed class ConstantValueRecord
+    {
+        public int Id { get; set; }
+
+        public string Country { get; set; } = string.Empty;
+    }
+
+    private sealed class ValidationRecord
+    {
+        public int Id { get; set; }
+
+        public int Age { get; set; }
+    }
+
+    private sealed class ImmutableCtorRecord
+    {
+        public ImmutableCtorRecord(int id, string name, int age)
+        {
+            Id = id;
+            Name = name;
+            Age = age;
+        }
+
+        public int Id { get; }
+
+        public string Name { get; }
+
+        public int Age { get; }
     }
 }

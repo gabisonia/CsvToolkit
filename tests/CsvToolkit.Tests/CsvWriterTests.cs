@@ -219,6 +219,61 @@ public sealed class CsvWriterTests
     }
 
     [Fact]
+    public void WriteRecord_UsesConstantAndDefaultFromFluentMap()
+    {
+        // Arrange
+        var options = new CsvOptions { NewLine = "\n" };
+        var maps = new CsvMapRegistry();
+        maps.Register<WriteRecord>(map =>
+        {
+            map.Map(x => x.Name).Constant("FixedName");
+            map.Map(x => x.Notes).Default("DefaultNote");
+        });
+
+        using var text = new StringWriter();
+        using var writer = new CsvWriter(text, options, maps);
+
+        // Act
+        writer.WriteRecord(new WriteRecord
+        {
+            Id = 7,
+            Name = "Ignored",
+            Notes = null!
+        });
+        var result = text.ToString();
+
+        // Assert
+        Assert.Equal("7,FixedName,DefaultNote\n", result);
+    }
+
+    [Fact]
+    public void WriteRecord_WithValidationFailure_ThrowsInvalidOperationException()
+    {
+        // Arrange
+        var options = new CsvOptions { NewLine = "\n" };
+        var maps = new CsvMapRegistry();
+        maps.Register<WriteRecord>(map =>
+        {
+            map.Map(x => x.Id).Validate(id => id > 0, "Id must be positive.");
+        });
+
+        using var text = new StringWriter();
+        using var writer = new CsvWriter(text, options, maps);
+
+        // Act
+        Action act = () => writer.WriteRecord(new WriteRecord
+        {
+            Id = 0,
+            Name = "Ada",
+            Notes = "N"
+        });
+
+        // Assert
+        var exception = Assert.Throws<InvalidOperationException>(act);
+        Assert.Equal("Id must be positive.", exception.Message);
+    }
+
+    [Fact]
     public void WriteRecord_Null_ThrowsArgumentNullException()
     {
         // Arrange

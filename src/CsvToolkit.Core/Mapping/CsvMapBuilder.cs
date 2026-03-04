@@ -44,6 +44,12 @@ public sealed class CsvMemberMapBuilder<T, TProperty>
         return this;
     }
 
+    public CsvMemberMapBuilder<T, TProperty> NameIndex(int index)
+    {
+        _config.NameIndex = index;
+        return this;
+    }
+
     public CsvMemberMapBuilder<T, TProperty> Index(int index)
     {
         _config.Index = index;
@@ -53,6 +59,51 @@ public sealed class CsvMemberMapBuilder<T, TProperty>
     public CsvMemberMapBuilder<T, TProperty> Ignore()
     {
         _config.Ignore = true;
+        return this;
+    }
+
+    public CsvMemberMapBuilder<T, TProperty> Optional()
+    {
+        _config.Optional = true;
+        return this;
+    }
+
+    public CsvMemberMapBuilder<T, TProperty> Default(TProperty value)
+    {
+        _config.HasDefault = true;
+        _config.DefaultValue = value;
+        return this;
+    }
+
+    public CsvMemberMapBuilder<T, TProperty> Constant(TProperty value)
+    {
+        _config.HasConstant = true;
+        _config.ConstantValue = value;
+        return this;
+    }
+
+    public CsvMemberMapBuilder<T, TProperty> Validate(Func<TProperty, bool> validator, string? message = null)
+    {
+        if (validator is null)
+        {
+            throw new ArgumentNullException(nameof(validator));
+        }
+
+        _config.Validation = value =>
+        {
+            if (value is null)
+            {
+                if (default(TProperty) is null)
+                {
+                    return validator((TProperty)(object?)null!);
+                }
+
+                return false;
+            }
+
+            return value is TProperty typed && validator(typed);
+        };
+        _config.ValidationMessage = message;
         return this;
     }
 
@@ -67,9 +118,25 @@ internal sealed class CsvFluentMemberConfig
 {
     public string? Name { get; set; }
 
+    public int? NameIndex { get; set; }
+
     public int? Index { get; set; }
 
     public bool Ignore { get; set; }
+
+    public bool Optional { get; set; }
+
+    public bool HasDefault { get; set; }
+
+    public object? DefaultValue { get; set; }
+
+    public bool HasConstant { get; set; }
+
+    public object? ConstantValue { get; set; }
+
+    public Func<object?, bool>? Validation { get; set; }
+
+    public string? ValidationMessage { get; set; }
 
     public IUntypedCsvTypeConverter? Converter { get; set; }
 }
