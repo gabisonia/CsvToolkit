@@ -9,7 +9,7 @@ public static class FluentMapApiDemo
 {
     public static void Run(string csvPath, CsvOptions options)
     {
-        Console.WriteLine("\n[5] Fluent mapper API (CsvMapRegistry)");
+        Console.WriteLine("\n[7] Fluent mapper API (CsvMapRegistry)");
         var maps = new CsvMapRegistry();
         maps.Register<FluentEmployee>(map =>
         {

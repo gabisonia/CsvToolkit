@@ -7,17 +7,13 @@ public static class WriteApiDemo
 {
     public static void Run(string outputPath, CsvOptions options)
     {
-        Console.WriteLine("\n[6] Write API (WriteHeader/WriteRecord/WriteField/NextRecord)");
+        Console.WriteLine("\n[9] Write API (WriteRecords + WriteField + NextRecord)");
         var records = BuildRecords();
 
         using var stream = File.Create(outputPath);
         using var writer = new CsvWriter(stream, options);
 
-        writer.WriteHeader<AttributedPerson>();
-        foreach (var record in records)
-        {
-            writer.WriteRecord(record);
-        }
+        writer.WriteRecords(records, writeHeader: true);
 
         writer.WriteField("manual_note");
         writer.WriteField("this row was added with WriteField");

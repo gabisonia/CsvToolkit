@@ -7,31 +7,27 @@ public static class AsyncApiDemo
 {
     public static async Task RunAsync(string inputPath, string outputPath, CsvOptions options)
     {
-        Console.WriteLine("\n[7] Async API (ReadRecordAsync + WriteRecordAsync)");
-        var rows = new List<AttributedPerson>();
+        Console.WriteLine("\n[10] Async API (GetRecordsAsync + WriteRecordsAsync)");
+        var copiedRows = 0;
 
         await using (var input = File.OpenRead(inputPath))
         await using (var reader = new CsvReader(input, options))
-        {
-            AttributedPerson? row;
-            while ((row = await reader.ReadRecordAsync<AttributedPerson>()) is not null)
-            {
-                rows.Add(row);
-            }
-        }
-
         await using (var output = File.Create(outputPath))
         await using (var writer = new CsvWriter(output, options))
         {
-            await writer.WriteHeaderAsync<AttributedPerson>();
-            foreach (var row in rows)
-            {
-                await writer.WriteRecordAsync(row);
-            }
-
+            await writer.WriteRecordsAsync(ReadRowsAsync(), writeHeader: true);
             await writer.FlushAsync();
+
+            async IAsyncEnumerable<AttributedPerson> ReadRowsAsync()
+            {
+                await foreach (var row in reader.GetRecordsAsync<AttributedPerson>())
+                {
+                    copiedRows++;
+                    yield return row;
+                }
+            }
         }
 
-        Console.WriteLine($"Async copied {rows.Count} rows to: {outputPath}");
+        Console.WriteLine($"Async copied {copiedRows} rows to: {outputPath}");
     }
 }
