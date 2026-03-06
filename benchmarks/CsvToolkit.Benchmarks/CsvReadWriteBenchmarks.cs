@@ -4,6 +4,7 @@ using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Order;
 using CsvHelper.Configuration;
 using CsvToolkit.Core.Mapping;
+using nietras.SeparatedValues;
 
 namespace CsvToolkit.Core.Benchmarks;
 
@@ -118,6 +119,34 @@ public class CsvReadWriteBenchmarks
     }
 
     [Benchmark]
+    public int Sep_ReadTyped_Stream()
+    {
+        using var stream = new MemoryStream(_csvDefaultUtf8, writable: false);
+        using var reader = Sep.New(',').Reader(o => o with
+        {
+            HasHeader = true,
+            Unescape = true,
+            CultureInfo = CultureInfo.InvariantCulture
+        }).From(stream);
+
+        var count = 0;
+        foreach (var row in reader)
+        {
+            _ = new BenchmarkRecord
+            {
+                Id = row[nameof(BenchmarkRecord.Id)].Parse<int>(),
+                Name = row[nameof(BenchmarkRecord.Name)].ToString(),
+                Amount = row[nameof(BenchmarkRecord.Amount)].Parse<decimal>(),
+                CreatedAt = row[nameof(BenchmarkRecord.CreatedAt)].Parse<DateTime>(),
+                IsActive = row[nameof(BenchmarkRecord.IsActive)].Parse<bool>()
+            };
+            count++;
+        }
+
+        return count;
+    }
+
+    [Benchmark]
     public int CsvToolkitCore_ReadDictionary_Stream()
     {
         using var stream = new MemoryStream(_csvDefaultUtf8, writable: false);
@@ -205,6 +234,26 @@ public class CsvReadWriteBenchmarks
     }
 
     [Benchmark]
+    public long Sep_WriteTyped_Stream()
+    {
+        using var stream = new MemoryStream();
+        using var writer = Sep.New(',').Writer(o => o with { Escape = true }).To(stream, leaveOpen: true);
+
+        foreach (var record in _records)
+        {
+            using var row = writer.NewRow();
+            row[nameof(BenchmarkRecord.Id)].Format(record.Id);
+            row[nameof(BenchmarkRecord.Name)].Set(record.Name);
+            row[nameof(BenchmarkRecord.Amount)].Format(record.Amount);
+            row[nameof(BenchmarkRecord.CreatedAt)].Format(record.CreatedAt, "O");
+            row[nameof(BenchmarkRecord.IsActive)].Set(record.IsActive ? "true" : "false");
+        }
+
+        writer.Flush();
+        return stream.Length;
+    }
+
+    [Benchmark]
     public int CsvToolkitCore_ReadTyped_SemicolonHighQuote()
     {
         using var stream = new MemoryStream(_csvSemicolonQuotedUtf8, writable: false);
@@ -239,6 +288,34 @@ public class CsvReadWriteBenchmarks
         var count = 0;
         foreach (var _ in csv.GetRecords<BenchmarkRecord>())
         {
+            count++;
+        }
+
+        return count;
+    }
+
+    [Benchmark]
+    public int Sep_ReadTyped_SemicolonHighQuote()
+    {
+        using var stream = new MemoryStream(_csvSemicolonQuotedUtf8, writable: false);
+        using var reader = Sep.New(';').Reader(o => o with
+        {
+            HasHeader = true,
+            Unescape = true,
+            CultureInfo = CultureInfo.InvariantCulture
+        }).From(stream);
+
+        var count = 0;
+        foreach (var row in reader)
+        {
+            _ = new BenchmarkRecord
+            {
+                Id = row[nameof(BenchmarkRecord.Id)].Parse<int>(),
+                Name = row[nameof(BenchmarkRecord.Name)].ToString(),
+                Amount = row[nameof(BenchmarkRecord.Amount)].Parse<decimal>(),
+                CreatedAt = row[nameof(BenchmarkRecord.CreatedAt)].Parse<DateTime>(),
+                IsActive = row[nameof(BenchmarkRecord.IsActive)].Parse<bool>()
+            };
             count++;
         }
 
@@ -293,6 +370,33 @@ public class CsvReadWriteBenchmarks
         var count = 0;
         foreach (var _ in csv.GetRecords<ConverterOptionsRecord>())
         {
+            count++;
+        }
+
+        return count;
+    }
+
+    [Benchmark]
+    public int Sep_ReadTyped_WithConverterOptions_Stream()
+    {
+        using var stream = new MemoryStream(_csvConverterOptionsUtf8, writable: false);
+        using var reader = Sep.New(',').Reader(o => o with
+        {
+            HasHeader = true,
+            CultureInfo = CultureInfo.InvariantCulture
+        }).From(stream);
+
+        var count = 0;
+        foreach (var row in reader)
+        {
+            _ = new ConverterOptionsRecord
+            {
+                Id = row[nameof(ConverterOptionsRecord.Id)].Parse<int>(),
+                Flag = ParseYN(row[nameof(ConverterOptionsRecord.Flag)].Span),
+                Created = DateTime.ParseExact(row[nameof(ConverterOptionsRecord.Created)].Span, "dd-MM-yyyy",
+                    CultureInfo.InvariantCulture),
+                Score = ParseNullableInt(row[nameof(ConverterOptionsRecord.Score)].Span)
+            };
             count++;
         }
 
@@ -356,6 +460,26 @@ public class CsvReadWriteBenchmarks
         }
 
         textWriter.Flush();
+        return stream.Length;
+    }
+
+    [Benchmark]
+    public long Sep_WriteTyped_WithConverterOptions_Stream()
+    {
+        using var stream = new MemoryStream();
+        using var writer = Sep.New(',').Writer().To(stream, leaveOpen: true);
+
+        foreach (var record in _converterRecords)
+        {
+            using var row = writer.NewRow();
+            row[nameof(ConverterOptionsRecord.Id)].Format(record.Id);
+            row[nameof(ConverterOptionsRecord.Flag)].Set(record.Flag ? "Y" : "N");
+            row[nameof(ConverterOptionsRecord.Created)].Format(record.Created, "dd-MM-yyyy");
+            row[nameof(ConverterOptionsRecord.Score)].Set(
+                record.Score?.ToString(CultureInfo.InvariantCulture) ?? "NULL");
+        }
+
+        writer.Flush();
         return stream.Length;
     }
 
@@ -497,6 +621,16 @@ public class CsvReadWriteBenchmarks
         }
 
         return builder.ToString();
+    }
+
+    private static bool ParseYN(ReadOnlySpan<char> span)
+    {
+        return span.Length == 1 && span[0] == 'Y';
+    }
+
+    private static int? ParseNullableInt(ReadOnlySpan<char> span)
+    {
+        return span.SequenceEqual("NULL") ? null : int.Parse(span, CultureInfo.InvariantCulture);
     }
 
     private sealed class BenchmarkRecord

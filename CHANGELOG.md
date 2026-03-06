@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Added
+- `Sep` benchmark coverage for common typed read/write scenarios in `benchmarks/CsvToolkit.Benchmarks`.
+
+### Changed
+- README benchmark summary updated for the `2026-03-07` benchmark run with `CsvToolkit.Core`, `CsvHelper`, and `Sep`.
+- Tracked benchmark snapshots updated under `docs/benchmarks/`:
+  - `docs/benchmarks/CsvReadWriteBenchmarks-2026-03-07.md`
+  - `docs/benchmarks/CsvReadWriteBenchmarks-2026-03-07.csv`
+
 ## [0.3.0] - 2026-03-04
 
 ### Added

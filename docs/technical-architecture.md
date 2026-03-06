@@ -16,7 +16,7 @@ This document explains what technology `CsvToolkit.Core` uses, how data flows th
 - Validation and benchmarking:
   - `xUnit` in `tests/CsvToolkit.Tests`
   - `BenchmarkDotNet` in `benchmarks/CsvToolkit.Benchmarks`
-  - `CsvHelper` used as a benchmark comparison baseline
+  - `CsvHelper` and `Sep` used as benchmark comparison baselines
 
 ## Component Overview
 
