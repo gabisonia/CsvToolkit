@@ -16,6 +16,50 @@ namespace CsvToolkit.Core;
 /// </summary>
 public sealed class CsvReader : IDisposable, IAsyncDisposable
 {
+    private static readonly object FailedMaterializationSentinel = new();
+    private static readonly MethodInfo TryGetBuiltInFieldValueMethodDefinition = typeof(CsvReader).GetMethod(
+        nameof(TryGetBuiltInFieldValue),
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("TryGetBuiltInFieldValue method not found.");
+    private static readonly MethodInfo TryGetStringFieldValueMethod = typeof(CsvReader).GetMethod(
+        nameof(TryGetStringFieldValue),
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("TryGetStringFieldValue method not found.");
+    private static readonly MethodInfo TryGetInt32FieldValueMethod = typeof(CsvReader).GetMethod(
+        nameof(TryGetInt32FieldValue),
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("TryGetInt32FieldValue method not found.");
+    private static readonly MethodInfo TryGetNullableInt32FieldValueMethod = typeof(CsvReader).GetMethod(
+        nameof(TryGetNullableInt32FieldValue),
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("TryGetNullableInt32FieldValue method not found.");
+    private static readonly MethodInfo TryGetDecimalFieldValueMethod = typeof(CsvReader).GetMethod(
+        nameof(TryGetDecimalFieldValue),
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("TryGetDecimalFieldValue method not found.");
+    private static readonly MethodInfo TryGetNullableDecimalFieldValueMethod = typeof(CsvReader).GetMethod(
+        nameof(TryGetNullableDecimalFieldValue),
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("TryGetNullableDecimalFieldValue method not found.");
+    private static readonly MethodInfo TryGetDateTimeFieldValueMethod = typeof(CsvReader).GetMethod(
+        nameof(TryGetDateTimeFieldValue),
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("TryGetDateTimeFieldValue method not found.");
+    private static readonly MethodInfo TryGetNullableDateTimeFieldValueMethod = typeof(CsvReader).GetMethod(
+        nameof(TryGetNullableDateTimeFieldValue),
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("TryGetNullableDateTimeFieldValue method not found.");
+    private static readonly MethodInfo TryGetBooleanFieldValueMethod = typeof(CsvReader).GetMethod(
+        nameof(TryGetBooleanFieldValue),
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("TryGetBooleanFieldValue method not found.");
+    private static readonly MethodInfo TryGetNullableBooleanFieldValueMethod = typeof(CsvReader).GetMethod(
+        nameof(TryGetNullableBooleanFieldValue),
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("TryGetNullableBooleanFieldValue method not found.");
+    private static readonly MethodInfo BuildCompiledBuiltInRecordMaterializerMethodDefinition = typeof(CsvReader)
+        .GetMethod(nameof(BuildCompiledBuiltInRecordMaterializer), BindingFlags.Static | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("BuildCompiledBuiltInRecordMaterializer method not found.");
     private readonly CsvParser _parser;
     private readonly CsvMapRegistry _mapRegistry;
     private readonly Dictionary<Type, int[]> _memberIndexCache = new();
@@ -224,19 +268,20 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
         }
         else
         {
+            var compiledBuiltInRecordMaterializer = context.CompiledBuiltInRecordMaterializer;
+            if (compiledBuiltInRecordMaterializer is not null)
+            {
+                var materialized = compiledBuiltInRecordMaterializer(this);
+                if (!ReferenceEquals(materialized, FailedMaterializationSentinel))
+                {
+                    return (T)materialized!;
+                }
+            }
+
             boxed = context.DefaultConstructorFactory!();
             var simpleReadPlan = context.SimpleReadPlan;
             if (simpleReadPlan is not null)
             {
-                if (simpleReadPlan.IsBuiltInOnly)
-                {
-                    var materializer = ResolveCompiledSimpleMaterializer<T>(simpleReadPlan);
-                    if (materializer is not null && materializer(this, (T)boxed))
-                    {
-                        return (T)boxed;
-                    }
-                }
-
                 if (TryPopulateUsingSimpleReadPlan(simpleReadPlan, boxed))
                 {
                     return (T)boxed;
@@ -415,6 +460,9 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
         var defaultConstructorFactory = constructorBinding is null
             ? ResolveDefaultConstructorFactory(type)
             : null;
+        var compiledBuiltInRecordMaterializer = constructorBinding is null && simpleReadPlan is not null
+            ? ResolveCompiledBuiltInRecordMaterializer(type, simpleReadPlan)
+            : null;
 
         var context = new CsvRecordReadContext(
             map,
@@ -423,7 +471,8 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
             conversionPlans,
             constructorBinding,
             simpleReadPlan,
-            defaultConstructorFactory);
+            defaultConstructorFactory,
+            compiledBuiltInRecordMaterializer);
         _recordReadContextCache[type] = context;
         return context;
     }
@@ -671,35 +720,47 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
         return plan;
     }
 
-    private Func<CsvReader, T, bool>? ResolveCompiledSimpleMaterializer<T>(CsvSimpleReadPlan plan)
+    private Func<CsvReader, object?>? ResolveCompiledBuiltInRecordMaterializer(Type type, CsvSimpleReadPlan plan)
     {
-        if (typeof(T).IsValueType || !plan.IsBuiltInOnly)
+        if (type.IsValueType || !plan.IsBuiltInOnly)
         {
             return null;
         }
 
-        if (_compiledSimpleMaterializerCache.TryGetValue(typeof(T), out var cached))
+        if (_compiledSimpleMaterializerCache.TryGetValue(type, out var cached))
         {
-            return (Func<CsvReader, T, bool>)cached;
+            return (Func<CsvReader, object?>)cached;
         }
 
-        var compiled = BuildCompiledSimpleMaterializer<T>(plan);
-        _compiledSimpleMaterializerCache[typeof(T)] = compiled;
+        var compiled = (Func<CsvReader, object?>)BuildCompiledBuiltInRecordMaterializerMethodDefinition
+            .MakeGenericMethod(type)
+            .Invoke(null, [plan])!;
+        _compiledSimpleMaterializerCache[type] = compiled;
         return compiled;
     }
 
-    private static Func<CsvReader, T, bool> BuildCompiledSimpleMaterializer<T>(CsvSimpleReadPlan plan)
+    private static Func<CsvReader, object?> BuildCompiledBuiltInRecordMaterializer<T>(CsvSimpleReadPlan plan)
     {
         var reader = Expression.Parameter(typeof(CsvReader), "reader");
-        var target = Expression.Parameter(typeof(T), "target");
-        var expressions = new List<Expression>(plan.Members.Length * 3 + 1);
-        var variables = new List<ParameterExpression>(plan.Members.Length);
-        var returnTarget = Expression.Label(typeof(bool), "return");
+        var target = Expression.Variable(typeof(T), "target");
+        var expressions = new List<Expression>(plan.Members.Length * 3 + 2);
+        var variables = new List<ParameterExpression>(plan.Members.Length + 1) { target };
+        var returnTarget = Expression.Label(typeof(object), "return");
 
-        var tryGetMethodDefinition = typeof(CsvReader).GetMethod(
-            nameof(TryGetBuiltInFieldValue),
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException("TryGetBuiltInFieldValue method not found.");
+        Expression newTarget;
+        if (typeof(T).IsValueType)
+        {
+            newTarget = Expression.Default(typeof(T));
+        }
+        else
+        {
+            var constructor = typeof(T).GetConstructor(Type.EmptyTypes)
+                ?? throw new InvalidOperationException(
+                    $"Type '{typeof(T).Name}' must have a public parameterless constructor.");
+            newTarget = Expression.New(constructor);
+        }
+
+        expressions.Add(Expression.Assign(target, newTarget));
 
         for (var i = 0; i < plan.Members.Length; i++)
         {
@@ -709,7 +770,7 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
             var valueVariable = Expression.Variable(propertyType, $"value{i}");
             variables.Add(valueVariable);
 
-            var tryGetMethod = tryGetMethodDefinition.MakeGenericMethod(propertyType);
+            var tryGetMethod = ResolveBuiltInFieldAccessorMethod(propertyType);
             var tryGetCall = Expression.Call(
                 reader,
                 tryGetMethod,
@@ -717,7 +778,7 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
                 valueVariable);
             expressions.Add(Expression.IfThen(
                 Expression.IsFalse(tryGetCall),
-                Expression.Return(returnTarget, Expression.Constant(false))));
+                Expression.Return(returnTarget, Expression.Constant(FailedMaterializationSentinel, typeof(object)))));
 
             Expression targetAccess = target;
             if (property.DeclaringType is not null && property.DeclaringType != typeof(T))
@@ -728,10 +789,217 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
             expressions.Add(Expression.Assign(Expression.Property(targetAccess, property), valueVariable));
         }
 
-        expressions.Add(Expression.Label(returnTarget, Expression.Constant(true)));
+        expressions.Add(Expression.Label(returnTarget, Expression.Convert(target, typeof(object))));
 
         var body = Expression.Block(variables, expressions);
-        return Expression.Lambda<Func<CsvReader, T, bool>>(body, reader, target).Compile();
+        return Expression.Lambda<Func<CsvReader, object?>>(body, reader).Compile();
+    }
+
+    private static MethodInfo ResolveBuiltInFieldAccessorMethod(Type propertyType)
+    {
+        if (propertyType == typeof(string))
+        {
+            return TryGetStringFieldValueMethod;
+        }
+
+        if (propertyType == typeof(int))
+        {
+            return TryGetInt32FieldValueMethod;
+        }
+
+        if (propertyType == typeof(int?))
+        {
+            return TryGetNullableInt32FieldValueMethod;
+        }
+
+        if (propertyType == typeof(decimal))
+        {
+            return TryGetDecimalFieldValueMethod;
+        }
+
+        if (propertyType == typeof(decimal?))
+        {
+            return TryGetNullableDecimalFieldValueMethod;
+        }
+
+        if (propertyType == typeof(DateTime))
+        {
+            return TryGetDateTimeFieldValueMethod;
+        }
+
+        if (propertyType == typeof(DateTime?))
+        {
+            return TryGetNullableDateTimeFieldValueMethod;
+        }
+
+        if (propertyType == typeof(bool))
+        {
+            return TryGetBooleanFieldValueMethod;
+        }
+
+        if (propertyType == typeof(bool?))
+        {
+            return TryGetNullableBooleanFieldValueMethod;
+        }
+
+        return TryGetBuiltInFieldValueMethodDefinition.MakeGenericMethod(propertyType);
+    }
+
+    private bool TryGetStringFieldValue(int fieldIndex, out string value)
+    {
+        if ((uint)fieldIndex >= (uint)CurrentRow.FieldCount)
+        {
+            value = string.Empty;
+            return false;
+        }
+
+        value = CurrentRow.GetFieldString(fieldIndex);
+        return true;
+    }
+
+    private bool TryGetInt32FieldValue(int fieldIndex, out int value)
+    {
+        if ((uint)fieldIndex >= (uint)CurrentRow.FieldCount)
+        {
+            value = default;
+            return false;
+        }
+
+        return int.TryParse(CurrentRow.GetFieldSpan(fieldIndex), NumberStyles.Integer, Options.CultureInfo, out value);
+    }
+
+    private bool TryGetNullableInt32FieldValue(int fieldIndex, out int? value)
+    {
+        if ((uint)fieldIndex >= (uint)CurrentRow.FieldCount)
+        {
+            value = default;
+            return false;
+        }
+
+        var source = CurrentRow.GetFieldSpan(fieldIndex);
+        if (source.Length == 0)
+        {
+            value = null;
+            return true;
+        }
+
+        if (int.TryParse(source, NumberStyles.Integer, Options.CultureInfo, out var parsed))
+        {
+            value = parsed;
+            return true;
+        }
+
+        value = default;
+        return false;
+    }
+
+    private bool TryGetDecimalFieldValue(int fieldIndex, out decimal value)
+    {
+        if ((uint)fieldIndex >= (uint)CurrentRow.FieldCount)
+        {
+            value = default;
+            return false;
+        }
+
+        return decimal.TryParse(CurrentRow.GetFieldSpan(fieldIndex), NumberStyles.Number, Options.CultureInfo,
+            out value);
+    }
+
+    private bool TryGetNullableDecimalFieldValue(int fieldIndex, out decimal? value)
+    {
+        if ((uint)fieldIndex >= (uint)CurrentRow.FieldCount)
+        {
+            value = default;
+            return false;
+        }
+
+        var source = CurrentRow.GetFieldSpan(fieldIndex);
+        if (source.Length == 0)
+        {
+            value = null;
+            return true;
+        }
+
+        if (decimal.TryParse(source, NumberStyles.Number, Options.CultureInfo, out var parsed))
+        {
+            value = parsed;
+            return true;
+        }
+
+        value = default;
+        return false;
+    }
+
+    private bool TryGetDateTimeFieldValue(int fieldIndex, out DateTime value)
+    {
+        if ((uint)fieldIndex >= (uint)CurrentRow.FieldCount)
+        {
+            value = default;
+            return false;
+        }
+
+        return TryParseDateTimeBuiltIn(CurrentRow.GetFieldSpan(fieldIndex), Options.CultureInfo, out value);
+    }
+
+    private bool TryGetNullableDateTimeFieldValue(int fieldIndex, out DateTime? value)
+    {
+        if ((uint)fieldIndex >= (uint)CurrentRow.FieldCount)
+        {
+            value = default;
+            return false;
+        }
+
+        var source = CurrentRow.GetFieldSpan(fieldIndex);
+        if (source.Length == 0)
+        {
+            value = null;
+            return true;
+        }
+
+        if (TryParseDateTimeBuiltIn(source, Options.CultureInfo, out var parsed))
+        {
+            value = parsed;
+            return true;
+        }
+
+        value = default;
+        return false;
+    }
+
+    private bool TryGetBooleanFieldValue(int fieldIndex, out bool value)
+    {
+        if ((uint)fieldIndex >= (uint)CurrentRow.FieldCount)
+        {
+            value = default;
+            return false;
+        }
+
+        return TryParseBooleanBuiltIn(CurrentRow.GetFieldSpan(fieldIndex), out value);
+    }
+
+    private bool TryGetNullableBooleanFieldValue(int fieldIndex, out bool? value)
+    {
+        if ((uint)fieldIndex >= (uint)CurrentRow.FieldCount)
+        {
+            value = default;
+            return false;
+        }
+
+        var source = CurrentRow.GetFieldSpan(fieldIndex);
+        if (source.Length == 0)
+        {
+            value = null;
+            return true;
+        }
+
+        if (TryParseBooleanBuiltIn(source, out var parsed))
+        {
+            value = parsed;
+            return true;
+        }
+
+        value = default;
+        return false;
     }
 
     private bool TryGetBuiltInFieldValue<TValue>(int fieldIndex, out TValue value)
@@ -1364,7 +1632,8 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
         CsvValueConversionPlan[] conversionPlans,
         CsvConstructorBinding? constructorBinding,
         CsvSimpleReadPlan? simpleReadPlan,
-        Func<object>? defaultConstructorFactory)
+        Func<object>? defaultConstructorFactory,
+        Func<CsvReader, object?>? compiledBuiltInRecordMaterializer)
     {
         public Mapping.CsvTypeMap Map { get; } = map;
 
@@ -1379,6 +1648,9 @@ public sealed class CsvReader : IDisposable, IAsyncDisposable
         public CsvSimpleReadPlan? SimpleReadPlan { get; } = simpleReadPlan;
 
         public Func<object>? DefaultConstructorFactory { get; } = defaultConstructorFactory;
+
+        public Func<CsvReader, object?>? CompiledBuiltInRecordMaterializer { get; } =
+            compiledBuiltInRecordMaterializer;
     }
 
     private readonly record struct CsvSimpleReadMember(

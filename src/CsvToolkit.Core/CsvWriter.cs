@@ -1,3 +1,5 @@
+using System.Linq.Expressions;
+using System.Reflection;
 using CsvToolkit.Core.Internal;
 using CsvToolkit.Core.Mapping;
 using CsvToolkit.Core.TypeConversion;
@@ -9,10 +11,85 @@ namespace CsvToolkit.Core;
 /// </summary>
 public sealed class CsvWriter : IDisposable, IAsyncDisposable
 {
+    private static readonly MethodInfo WriteStringFieldValueMethod = typeof(CsvWriter).GetMethod(
+        nameof(WriteStringFieldValue),
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("WriteStringFieldValue method not found.");
+    private static readonly MethodInfo WriteStringFieldValueWithOptionsMethod = typeof(CsvWriter).GetMethod(
+        nameof(WriteStringFieldValueWithOptions),
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("WriteStringFieldValueWithOptions method not found.");
+    private static readonly MethodInfo WriteInt32FieldValueMethod = typeof(CsvWriter).GetMethod(
+        nameof(WriteInt32FieldValue),
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("WriteInt32FieldValue method not found.");
+    private static readonly MethodInfo WriteInt32FieldValueWithOptionsMethod = typeof(CsvWriter).GetMethod(
+        nameof(WriteInt32FieldValueWithOptions),
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("WriteInt32FieldValueWithOptions method not found.");
+    private static readonly MethodInfo WriteNullableInt32FieldValueMethod = typeof(CsvWriter).GetMethod(
+        nameof(WriteNullableInt32FieldValue),
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("WriteNullableInt32FieldValue method not found.");
+    private static readonly MethodInfo WriteNullableInt32FieldValueWithOptionsMethod = typeof(CsvWriter).GetMethod(
+        nameof(WriteNullableInt32FieldValueWithOptions),
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("WriteNullableInt32FieldValueWithOptions method not found.");
+    private static readonly MethodInfo WriteDecimalFieldValueMethod = typeof(CsvWriter).GetMethod(
+        nameof(WriteDecimalFieldValue),
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("WriteDecimalFieldValue method not found.");
+    private static readonly MethodInfo WriteDecimalFieldValueWithOptionsMethod = typeof(CsvWriter).GetMethod(
+        nameof(WriteDecimalFieldValueWithOptions),
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("WriteDecimalFieldValueWithOptions method not found.");
+    private static readonly MethodInfo WriteNullableDecimalFieldValueMethod = typeof(CsvWriter).GetMethod(
+        nameof(WriteNullableDecimalFieldValue),
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("WriteNullableDecimalFieldValue method not found.");
+    private static readonly MethodInfo WriteNullableDecimalFieldValueWithOptionsMethod = typeof(CsvWriter).GetMethod(
+        nameof(WriteNullableDecimalFieldValueWithOptions),
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("WriteNullableDecimalFieldValueWithOptions method not found.");
+    private static readonly MethodInfo WriteDateTimeFieldValueMethod = typeof(CsvWriter).GetMethod(
+        nameof(WriteDateTimeFieldValue),
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("WriteDateTimeFieldValue method not found.");
+    private static readonly MethodInfo WriteDateTimeFieldValueWithOptionsMethod = typeof(CsvWriter).GetMethod(
+        nameof(WriteDateTimeFieldValueWithOptions),
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("WriteDateTimeFieldValueWithOptions method not found.");
+    private static readonly MethodInfo WriteNullableDateTimeFieldValueMethod = typeof(CsvWriter).GetMethod(
+        nameof(WriteNullableDateTimeFieldValue),
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("WriteNullableDateTimeFieldValue method not found.");
+    private static readonly MethodInfo WriteNullableDateTimeFieldValueWithOptionsMethod = typeof(CsvWriter).GetMethod(
+        nameof(WriteNullableDateTimeFieldValueWithOptions),
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("WriteNullableDateTimeFieldValueWithOptions method not found.");
+    private static readonly MethodInfo WriteBooleanFieldValueMethod = typeof(CsvWriter).GetMethod(
+        nameof(WriteBooleanFieldValue),
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("WriteBooleanFieldValue method not found.");
+    private static readonly MethodInfo WriteBooleanFieldValueWithOptionsMethod = typeof(CsvWriter).GetMethod(
+        nameof(WriteBooleanFieldValueWithOptions),
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("WriteBooleanFieldValueWithOptions method not found.");
+    private static readonly MethodInfo WriteNullableBooleanFieldValueMethod = typeof(CsvWriter).GetMethod(
+        nameof(WriteNullableBooleanFieldValue),
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("WriteNullableBooleanFieldValue method not found.");
+    private static readonly MethodInfo WriteNullableBooleanFieldValueWithOptionsMethod = typeof(CsvWriter).GetMethod(
+        nameof(WriteNullableBooleanFieldValueWithOptions),
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("WriteNullableBooleanFieldValueWithOptions method not found.");
     private readonly ICsvCharOutput _output;
     private readonly CsvMapRegistry _mapRegistry;
     private readonly Dictionary<Type, int[]> _writableMemberIndexCache = new();
     private readonly Dictionary<Type, CsvValueConversionPlan[]> _memberFormattingPlanCache = new();
+    private readonly Dictionary<Type, CsvSimpleWritePlan?> _simpleWritePlanCache = new();
+    private readonly Dictionary<Type, object> _compiledSimpleWriterCache = new();
+    private readonly Dictionary<Type, object> _compiledAsyncSimpleWriterCache = new();
     private readonly char[] _charScratch = new char[2];
     private bool _firstField = true;
     private int _fieldIndex;
@@ -105,6 +182,277 @@ public sealed class CsvWriter : IDisposable, IAsyncDisposable
 
         _firstField = false;
         _fieldIndex++;
+    }
+
+    private void WriteStringFieldValue(string? value)
+    {
+        WriteField(value.AsSpan());
+    }
+
+    private void WriteStringFieldValueWithOptions(string? value, CsvTypeConverterOptions? converterOptions)
+    {
+        if (value is not null)
+        {
+            WriteField(value.AsSpan());
+            return;
+        }
+
+        WriteNullTokenOrEmpty(converterOptions);
+    }
+
+    private void WriteInt32FieldValue(int value)
+    {
+        Span<char> buffer = stackalloc char[32];
+        if (value.TryFormat(buffer, out var written, default, Options.CultureInfo))
+        {
+            WriteField(buffer[..written]);
+            return;
+        }
+
+        WriteField(value.ToString(null, Options.CultureInfo).AsSpan());
+    }
+
+    private void WriteInt32FieldValueWithOptions(int value, CsvTypeConverterOptions? converterOptions)
+    {
+        WriteFormattedInt32(value, converterOptions);
+    }
+
+    private void WriteNullableInt32FieldValue(int? value)
+    {
+        if (value.HasValue)
+        {
+            WriteInt32FieldValue(value.Value);
+            return;
+        }
+
+        WriteField(ReadOnlySpan<char>.Empty);
+    }
+
+    private void WriteNullableInt32FieldValueWithOptions(int? value, CsvTypeConverterOptions? converterOptions)
+    {
+        if (value.HasValue)
+        {
+            WriteFormattedInt32(value.Value, converterOptions);
+            return;
+        }
+
+        WriteNullTokenOrEmpty(converterOptions);
+    }
+
+    private void WriteDecimalFieldValue(decimal value)
+    {
+        Span<char> buffer = stackalloc char[64];
+        if (value.TryFormat(buffer, out var written, default, Options.CultureInfo))
+        {
+            WriteField(buffer[..written]);
+            return;
+        }
+
+        WriteField(value.ToString(null, Options.CultureInfo).AsSpan());
+    }
+
+    private void WriteDecimalFieldValueWithOptions(decimal value, CsvTypeConverterOptions? converterOptions)
+    {
+        WriteFormattedDecimal(value, converterOptions);
+    }
+
+    private void WriteNullableDecimalFieldValue(decimal? value)
+    {
+        if (value.HasValue)
+        {
+            WriteDecimalFieldValue(value.Value);
+            return;
+        }
+
+        WriteField(ReadOnlySpan<char>.Empty);
+    }
+
+    private void WriteNullableDecimalFieldValueWithOptions(decimal? value, CsvTypeConverterOptions? converterOptions)
+    {
+        if (value.HasValue)
+        {
+            WriteFormattedDecimal(value.Value, converterOptions);
+            return;
+        }
+
+        WriteNullTokenOrEmpty(converterOptions);
+    }
+
+    private void WriteDateTimeFieldValue(DateTime value)
+    {
+        Span<char> buffer = stackalloc char[128];
+        if (value.TryFormat(buffer, out var written, default, Options.CultureInfo))
+        {
+            WriteField(buffer[..written]);
+            return;
+        }
+
+        WriteField(value.ToString(null, Options.CultureInfo).AsSpan());
+    }
+
+    private void WriteDateTimeFieldValueWithOptions(DateTime value, CsvTypeConverterOptions? converterOptions)
+    {
+        WriteFormattedDateTime(value, converterOptions);
+    }
+
+    private void WriteNullableDateTimeFieldValue(DateTime? value)
+    {
+        if (value.HasValue)
+        {
+            WriteDateTimeFieldValue(value.Value);
+            return;
+        }
+
+        WriteField(ReadOnlySpan<char>.Empty);
+    }
+
+    private void WriteNullableDateTimeFieldValueWithOptions(DateTime? value, CsvTypeConverterOptions? converterOptions)
+    {
+        if (value.HasValue)
+        {
+            WriteFormattedDateTime(value.Value, converterOptions);
+            return;
+        }
+
+        WriteNullTokenOrEmpty(converterOptions);
+    }
+
+    private void WriteBooleanFieldValue(bool value)
+    {
+        if (value)
+        {
+            WriteField("True".AsSpan());
+            return;
+        }
+
+        WriteField("False".AsSpan());
+    }
+
+    private void WriteBooleanFieldValueWithOptions(bool value, CsvTypeConverterOptions? converterOptions)
+    {
+        if (value)
+        {
+            if (converterOptions is { TrueValues.Count: > 0 })
+            {
+                WriteField(converterOptions.TrueValues[0].AsSpan());
+                return;
+            }
+
+            WriteField("True".AsSpan());
+            return;
+        }
+
+        if (converterOptions is { FalseValues.Count: > 0 })
+        {
+            WriteField(converterOptions.FalseValues[0].AsSpan());
+            return;
+        }
+
+        WriteField("False".AsSpan());
+    }
+
+    private ValueTask WriteStringFieldValueAsync(string? value, CsvTypeConverterOptions? converterOptions,
+        CancellationToken cancellationToken)
+    {
+        if (value is not null)
+        {
+            return WriteFieldCoreAsync(value.AsMemory(), cancellationToken);
+        }
+
+        return WriteNullTokenOrEmptyAsync(converterOptions, cancellationToken);
+    }
+
+    private ValueTask WriteInt32FieldValueAsync(int value, CsvTypeConverterOptions? converterOptions,
+        CancellationToken cancellationToken)
+    {
+        return WriteFormattedInt32Async(value, converterOptions, cancellationToken);
+    }
+
+    private ValueTask WriteNullableInt32FieldValueAsync(int? value, CsvTypeConverterOptions? converterOptions,
+        CancellationToken cancellationToken)
+    {
+        return value.HasValue
+            ? WriteFormattedInt32Async(value.Value, converterOptions, cancellationToken)
+            : WriteNullTokenOrEmptyAsync(converterOptions, cancellationToken);
+    }
+
+    private ValueTask WriteDecimalFieldValueAsync(decimal value, CsvTypeConverterOptions? converterOptions,
+        CancellationToken cancellationToken)
+    {
+        return WriteFormattedDecimalAsync(value, converterOptions, cancellationToken);
+    }
+
+    private ValueTask WriteNullableDecimalFieldValueAsync(decimal? value, CsvTypeConverterOptions? converterOptions,
+        CancellationToken cancellationToken)
+    {
+        return value.HasValue
+            ? WriteFormattedDecimalAsync(value.Value, converterOptions, cancellationToken)
+            : WriteNullTokenOrEmptyAsync(converterOptions, cancellationToken);
+    }
+
+    private ValueTask WriteDateTimeFieldValueAsync(DateTime value, CsvTypeConverterOptions? converterOptions,
+        CancellationToken cancellationToken)
+    {
+        return WriteFormattedDateTimeAsync(value, converterOptions, cancellationToken);
+    }
+
+    private ValueTask WriteNullableDateTimeFieldValueAsync(DateTime? value, CsvTypeConverterOptions? converterOptions,
+        CancellationToken cancellationToken)
+    {
+        return value.HasValue
+            ? WriteFormattedDateTimeAsync(value.Value, converterOptions, cancellationToken)
+            : WriteNullTokenOrEmptyAsync(converterOptions, cancellationToken);
+    }
+
+    private ValueTask WriteBooleanFieldValueAsync(bool value, CsvTypeConverterOptions? converterOptions,
+        CancellationToken cancellationToken)
+    {
+        if (value)
+        {
+            if (converterOptions is { TrueValues.Count: > 0 })
+            {
+                return WriteFieldCoreAsync(converterOptions.TrueValues[0].AsMemory(), cancellationToken);
+            }
+
+            return WriteFieldCoreAsync("True".AsMemory(), cancellationToken);
+        }
+
+        if (converterOptions is { FalseValues.Count: > 0 })
+        {
+            return WriteFieldCoreAsync(converterOptions.FalseValues[0].AsMemory(), cancellationToken);
+        }
+
+        return WriteFieldCoreAsync("False".AsMemory(), cancellationToken);
+    }
+
+    private ValueTask WriteNullableBooleanFieldValueAsync(bool? value, CsvTypeConverterOptions? converterOptions,
+        CancellationToken cancellationToken)
+    {
+        return value.HasValue
+            ? WriteBooleanFieldValueAsync(value.Value, converterOptions, cancellationToken)
+            : WriteNullTokenOrEmptyAsync(converterOptions, cancellationToken);
+    }
+
+    private void WriteNullableBooleanFieldValue(bool? value)
+    {
+        if (value.HasValue)
+        {
+            WriteBooleanFieldValue(value.Value);
+            return;
+        }
+
+        WriteField(ReadOnlySpan<char>.Empty);
+    }
+
+    private void WriteNullableBooleanFieldValueWithOptions(bool? value, CsvTypeConverterOptions? converterOptions)
+    {
+        if (value.HasValue)
+        {
+            WriteBooleanFieldValueWithOptions(value.Value, converterOptions);
+            return;
+        }
+
+        WriteNullTokenOrEmpty(converterOptions);
     }
 
     public ValueTask WriteFieldAsync(ReadOnlyMemory<char> value, CancellationToken cancellationToken = default)
@@ -209,6 +557,18 @@ public sealed class CsvWriter : IDisposable, IAsyncDisposable
         var map = _mapRegistry.GetOrCreate(typeof(T));
         var writableMemberIndices = ResolveWritableMemberIndices(map);
         var formattingPlans = ResolveMemberFormattingPlans(map);
+        var simpleWritePlan = ResolveSimpleWritePlan(map, writableMemberIndices, formattingPlans);
+        if (simpleWritePlan is not null)
+        {
+            var compiledWriter = ResolveCompiledSimpleWriter<T>(simpleWritePlan);
+            if (compiledWriter is not null)
+            {
+                compiledWriter(this, record);
+                NextRecord();
+                return;
+            }
+        }
+
         object boxed = record;
 
         for (var i = 0; i < writableMemberIndices.Length; i++)
@@ -252,6 +612,18 @@ public sealed class CsvWriter : IDisposable, IAsyncDisposable
         var map = _mapRegistry.GetOrCreate(typeof(T));
         var writableMemberIndices = ResolveWritableMemberIndices(map);
         var formattingPlans = ResolveMemberFormattingPlans(map);
+        var simpleWritePlan = ResolveSimpleWritePlan(map, writableMemberIndices, formattingPlans);
+        if (simpleWritePlan is not null)
+        {
+            var compiledAsyncWriter = ResolveCompiledAsyncSimpleWriter<T>(simpleWritePlan);
+            if (compiledAsyncWriter is not null)
+            {
+                await compiledAsyncWriter(this, record, cancellationToken).ConfigureAwait(false);
+                await NextRecordAsync(cancellationToken).ConfigureAwait(false);
+                return;
+            }
+        }
+
         object boxed = record;
 
         for (var i = 0; i < writableMemberIndices.Length; i++)
@@ -418,6 +790,253 @@ public sealed class CsvWriter : IDisposable, IAsyncDisposable
         var indices = members.ToArray();
         _writableMemberIndexCache[map.RecordType] = indices;
         return indices;
+    }
+
+    private CsvSimpleWritePlan? ResolveSimpleWritePlan(
+        CsvTypeMap map,
+        int[] writableMemberIndices,
+        CsvValueConversionPlan[] formattingPlans)
+    {
+        if (_simpleWritePlanCache.TryGetValue(map.RecordType, out var cached))
+        {
+            return cached;
+        }
+
+        var members = new CsvSimpleWriteMember[writableMemberIndices.Length];
+        for (var i = 0; i < writableMemberIndices.Length; i++)
+        {
+            var memberIndex = writableMemberIndices[i];
+            var member = map.Members[memberIndex];
+            var formattingPlan = formattingPlans[memberIndex];
+            var writeMethod = ResolveBuiltInWriterMethod(member.PropertyType, formattingPlan);
+
+            if (member.HasConstant ||
+                member.HasDefault ||
+                member.Validation is not null ||
+                formattingPlan.Converter is not null ||
+                writeMethod is null)
+            {
+                _simpleWritePlanCache[map.RecordType] = null;
+                return null;
+            }
+
+            members[i] = new CsvSimpleWriteMember(member.Property, writeMethod, formattingPlan.ConverterOptions);
+        }
+
+        var plan = new CsvSimpleWritePlan(members);
+        _simpleWritePlanCache[map.RecordType] = plan;
+        return plan;
+    }
+
+    private Action<CsvWriter, T>? ResolveCompiledSimpleWriter<T>(CsvSimpleWritePlan plan)
+    {
+        if (_compiledSimpleWriterCache.TryGetValue(typeof(T), out var cached))
+        {
+            return (Action<CsvWriter, T>)cached;
+        }
+
+        var compiled = BuildCompiledSimpleWriter<T>(plan);
+        _compiledSimpleWriterCache[typeof(T)] = compiled;
+        return compiled;
+    }
+
+    private Func<CsvWriter, T, CancellationToken, ValueTask>? ResolveCompiledAsyncSimpleWriter<T>(CsvSimpleWritePlan plan)
+    {
+        if (_compiledAsyncSimpleWriterCache.TryGetValue(typeof(T), out var cached))
+        {
+            return (Func<CsvWriter, T, CancellationToken, ValueTask>)cached;
+        }
+
+        var compiled = BuildCompiledAsyncSimpleWriter<T>(plan);
+        _compiledAsyncSimpleWriterCache[typeof(T)] = compiled;
+        return compiled;
+    }
+
+    private static Action<CsvWriter, T> BuildCompiledSimpleWriter<T>(CsvSimpleWritePlan plan)
+    {
+        var writer = Expression.Parameter(typeof(CsvWriter), "writer");
+        var record = Expression.Parameter(typeof(T), "record");
+        var expressions = new List<Expression>(plan.Members.Length);
+
+        for (var i = 0; i < plan.Members.Length; i++)
+        {
+            var member = plan.Members[i];
+            Expression recordAccess = record;
+            if (member.Property.DeclaringType is not null && member.Property.DeclaringType != typeof(T))
+            {
+                recordAccess = Expression.Convert(recordAccess, member.Property.DeclaringType);
+            }
+
+            var propertyAccess = Expression.Property(recordAccess, member.Property);
+            if (member.ConverterOptions is null)
+            {
+                expressions.Add(Expression.Call(writer, member.WriteMethod, propertyAccess));
+            }
+            else
+            {
+                expressions.Add(Expression.Call(
+                    writer,
+                    member.WriteMethod,
+                    propertyAccess,
+                    Expression.Constant(member.ConverterOptions, typeof(CsvTypeConverterOptions))));
+            }
+        }
+
+        var body = Expression.Block(expressions);
+        return Expression.Lambda<Action<CsvWriter, T>>(body, writer, record).Compile();
+    }
+
+    private static Func<CsvWriter, T, CancellationToken, ValueTask> BuildCompiledAsyncSimpleWriter<T>(
+        CsvSimpleWritePlan plan)
+    {
+        var accessors = new CsvAsyncSimpleWriteAccessor<T>[plan.Members.Length];
+        for (var i = 0; i < plan.Members.Length; i++)
+        {
+            accessors[i] = CreateAsyncSimpleWriteAccessor<T>(plan.Members[i]);
+        }
+
+        return async (writer, record, cancellationToken) =>
+        {
+            for (var i = 0; i < accessors.Length; i++)
+            {
+                await accessors[i].WriteAsync(writer, record, cancellationToken).ConfigureAwait(false);
+            }
+        };
+    }
+
+    private static CsvAsyncSimpleWriteAccessor<T> CreateAsyncSimpleWriteAccessor<T>(in CsvSimpleWriteMember member)
+    {
+        var factory = typeof(CsvWriter).GetMethod(nameof(CreateAsyncSimpleWriteAccessorCore),
+                BindingFlags.Static | BindingFlags.NonPublic)!
+            .MakeGenericMethod(typeof(T), member.Property.PropertyType);
+        return (CsvAsyncSimpleWriteAccessor<T>)factory.Invoke(null, [member])!;
+    }
+
+    private static CsvAsyncSimpleWriteAccessor<TRecord> CreateAsyncSimpleWriteAccessorCore<TRecord, TProperty>(
+        CsvSimpleWriteMember member)
+    {
+        var getter = BuildTypedPropertyGetter<TRecord, TProperty>(member.Property);
+        var asyncWriteMethod = ResolveBuiltInAsyncWriterMethod(typeof(TProperty))
+            ?? throw new InvalidOperationException($"No async writer method for '{typeof(TProperty).Name}'.");
+        var writerDelegate =
+            (Func<CsvWriter, TProperty, CsvTypeConverterOptions?, CancellationToken, ValueTask>)asyncWriteMethod
+            .CreateDelegate(typeof(Func<CsvWriter, TProperty, CsvTypeConverterOptions?, CancellationToken, ValueTask>));
+        return new CsvAsyncSimpleWriteAccessor<TRecord, TProperty>(getter, writerDelegate, member.ConverterOptions);
+    }
+
+    private static Func<TRecord, TProperty> BuildTypedPropertyGetter<TRecord, TProperty>(PropertyInfo property)
+    {
+        var record = Expression.Parameter(typeof(TRecord), "record");
+        Expression recordAccess = record;
+        if (property.DeclaringType is not null && property.DeclaringType != typeof(TRecord))
+        {
+            recordAccess = Expression.Convert(recordAccess, property.DeclaringType);
+        }
+
+        var body = Expression.Property(recordAccess, property);
+        return Expression.Lambda<Func<TRecord, TProperty>>(body, record).Compile();
+    }
+
+    private static MethodInfo? ResolveBuiltInWriterMethod(Type propertyType, in CsvValueConversionPlan formattingPlan)
+    {
+        var hasConverterOptions = formattingPlan.ConverterOptions is not null;
+
+        if (propertyType == typeof(string))
+        {
+            return hasConverterOptions ? WriteStringFieldValueWithOptionsMethod : WriteStringFieldValueMethod;
+        }
+
+        if (propertyType == typeof(int))
+        {
+            return hasConverterOptions ? WriteInt32FieldValueWithOptionsMethod : WriteInt32FieldValueMethod;
+        }
+
+        if (propertyType == typeof(int?))
+        {
+            return hasConverterOptions ? WriteNullableInt32FieldValueWithOptionsMethod : WriteNullableInt32FieldValueMethod;
+        }
+
+        if (propertyType == typeof(decimal))
+        {
+            return hasConverterOptions ? WriteDecimalFieldValueWithOptionsMethod : WriteDecimalFieldValueMethod;
+        }
+
+        if (propertyType == typeof(decimal?))
+        {
+            return hasConverterOptions ? WriteNullableDecimalFieldValueWithOptionsMethod : WriteNullableDecimalFieldValueMethod;
+        }
+
+        if (propertyType == typeof(DateTime))
+        {
+            return hasConverterOptions ? WriteDateTimeFieldValueWithOptionsMethod : WriteDateTimeFieldValueMethod;
+        }
+
+        if (propertyType == typeof(DateTime?))
+        {
+            return hasConverterOptions ? WriteNullableDateTimeFieldValueWithOptionsMethod : WriteNullableDateTimeFieldValueMethod;
+        }
+
+        if (propertyType == typeof(bool))
+        {
+            return hasConverterOptions ? WriteBooleanFieldValueWithOptionsMethod : WriteBooleanFieldValueMethod;
+        }
+
+        if (propertyType == typeof(bool?))
+        {
+            return hasConverterOptions ? WriteNullableBooleanFieldValueWithOptionsMethod : WriteNullableBooleanFieldValueMethod;
+        }
+
+        return null;
+    }
+
+    private static MethodInfo? ResolveBuiltInAsyncWriterMethod(Type propertyType)
+    {
+        if (propertyType == typeof(string))
+        {
+            return typeof(CsvWriter).GetMethod(nameof(WriteStringFieldValueAsync), BindingFlags.Instance | BindingFlags.NonPublic);
+        }
+
+        if (propertyType == typeof(int))
+        {
+            return typeof(CsvWriter).GetMethod(nameof(WriteInt32FieldValueAsync), BindingFlags.Instance | BindingFlags.NonPublic);
+        }
+
+        if (propertyType == typeof(int?))
+        {
+            return typeof(CsvWriter).GetMethod(nameof(WriteNullableInt32FieldValueAsync), BindingFlags.Instance | BindingFlags.NonPublic);
+        }
+
+        if (propertyType == typeof(decimal))
+        {
+            return typeof(CsvWriter).GetMethod(nameof(WriteDecimalFieldValueAsync), BindingFlags.Instance | BindingFlags.NonPublic);
+        }
+
+        if (propertyType == typeof(decimal?))
+        {
+            return typeof(CsvWriter).GetMethod(nameof(WriteNullableDecimalFieldValueAsync), BindingFlags.Instance | BindingFlags.NonPublic);
+        }
+
+        if (propertyType == typeof(DateTime))
+        {
+            return typeof(CsvWriter).GetMethod(nameof(WriteDateTimeFieldValueAsync), BindingFlags.Instance | BindingFlags.NonPublic);
+        }
+
+        if (propertyType == typeof(DateTime?))
+        {
+            return typeof(CsvWriter).GetMethod(nameof(WriteNullableDateTimeFieldValueAsync), BindingFlags.Instance | BindingFlags.NonPublic);
+        }
+
+        if (propertyType == typeof(bool))
+        {
+            return typeof(CsvWriter).GetMethod(nameof(WriteBooleanFieldValueAsync), BindingFlags.Instance | BindingFlags.NonPublic);
+        }
+
+        if (propertyType == typeof(bool?))
+        {
+            return typeof(CsvWriter).GetMethod(nameof(WriteNullableBooleanFieldValueAsync), BindingFlags.Instance | BindingFlags.NonPublic);
+        }
+
+        return null;
     }
 
     private void WriteDelimiterIfNeeded()
@@ -622,5 +1241,149 @@ public sealed class CsvWriter : IDisposable, IAsyncDisposable
 
         sanitized = string.Concat(Options.InjectionEscapeCharacter, value.ToString());
         return true;
+    }
+
+    private void WriteFormattedInt32(int value, CsvTypeConverterOptions? converterOptions)
+    {
+        var culture = converterOptions?.CultureInfo ?? Options.CultureInfo;
+        var format = converterOptions is { Formats.Count: > 0 } ? converterOptions.Formats[0] : null;
+        Span<char> buffer = stackalloc char[32];
+        if (value.TryFormat(buffer, out var written, format, culture))
+        {
+            WriteField(buffer[..written]);
+            return;
+        }
+
+        WriteField(value.ToString(format, culture).AsSpan());
+    }
+
+    private void WriteFormattedDecimal(decimal value, CsvTypeConverterOptions? converterOptions)
+    {
+        var culture = converterOptions?.CultureInfo ?? Options.CultureInfo;
+        var format = converterOptions is { Formats.Count: > 0 } ? converterOptions.Formats[0] : null;
+        Span<char> buffer = stackalloc char[64];
+        if (value.TryFormat(buffer, out var written, format, culture))
+        {
+            WriteField(buffer[..written]);
+            return;
+        }
+
+        WriteField(value.ToString(format, culture).AsSpan());
+    }
+
+    private void WriteFormattedDateTime(DateTime value, CsvTypeConverterOptions? converterOptions)
+    {
+        var culture = converterOptions?.CultureInfo ?? Options.CultureInfo;
+        var format = converterOptions is { Formats.Count: > 0 } ? converterOptions.Formats[0] : null;
+        Span<char> buffer = stackalloc char[128];
+        if (value.TryFormat(buffer, out var written, format, culture))
+        {
+            WriteField(buffer[..written]);
+            return;
+        }
+
+        WriteField(value.ToString(format, culture).AsSpan());
+    }
+
+    private void WriteNullTokenOrEmpty(CsvTypeConverterOptions? converterOptions)
+    {
+        if (converterOptions is { NullValues.Count: > 0 })
+        {
+            WriteField(converterOptions.NullValues[0].AsSpan());
+            return;
+        }
+
+        WriteField(ReadOnlySpan<char>.Empty);
+    }
+
+    private ValueTask WriteFormattedInt32Async(int value, CsvTypeConverterOptions? converterOptions,
+        CancellationToken cancellationToken)
+    {
+        var culture = converterOptions?.CultureInfo ?? Options.CultureInfo;
+        var format = converterOptions is { Formats.Count: > 0 } ? converterOptions.Formats[0] : null;
+        char[]? rented = null;
+        try
+        {
+            rented = new char[32];
+            if (value.TryFormat(rented, out var written, format, culture))
+            {
+                return WriteFieldCoreAsync(rented.AsMemory(0, written), cancellationToken);
+            }
+        }
+        finally
+        {
+            if (rented is not null)
+            {
+                // no-op, array was temporary and not pooled
+            }
+        }
+
+        return WriteFieldCoreAsync(value.ToString(format, culture).AsMemory(), cancellationToken);
+    }
+
+    private ValueTask WriteFormattedDecimalAsync(decimal value, CsvTypeConverterOptions? converterOptions,
+        CancellationToken cancellationToken)
+    {
+        var culture = converterOptions?.CultureInfo ?? Options.CultureInfo;
+        var format = converterOptions is { Formats.Count: > 0 } ? converterOptions.Formats[0] : null;
+        var buffer = new char[64];
+        if (value.TryFormat(buffer, out var written, format, culture))
+        {
+            return WriteFieldCoreAsync(buffer.AsMemory(0, written), cancellationToken);
+        }
+
+        return WriteFieldCoreAsync(value.ToString(format, culture).AsMemory(), cancellationToken);
+    }
+
+    private ValueTask WriteFormattedDateTimeAsync(DateTime value, CsvTypeConverterOptions? converterOptions,
+        CancellationToken cancellationToken)
+    {
+        var culture = converterOptions?.CultureInfo ?? Options.CultureInfo;
+        var format = converterOptions is { Formats.Count: > 0 } ? converterOptions.Formats[0] : null;
+        var buffer = new char[128];
+        if (value.TryFormat(buffer, out var written, format, culture))
+        {
+            return WriteFieldCoreAsync(buffer.AsMemory(0, written), cancellationToken);
+        }
+
+        return WriteFieldCoreAsync(value.ToString(format, culture).AsMemory(), cancellationToken);
+    }
+
+    private ValueTask WriteNullTokenOrEmptyAsync(CsvTypeConverterOptions? converterOptions,
+        CancellationToken cancellationToken)
+    {
+        if (converterOptions is { NullValues.Count: > 0 })
+        {
+            return WriteFieldCoreAsync(converterOptions.NullValues[0].AsMemory(), cancellationToken);
+        }
+
+        return WriteFieldCoreAsync(ReadOnlyMemory<char>.Empty, cancellationToken);
+    }
+
+    private readonly record struct CsvSimpleWriteMember(
+        PropertyInfo Property,
+        MethodInfo WriteMethod,
+        CsvTypeConverterOptions? ConverterOptions);
+
+    private sealed class CsvSimpleWritePlan(CsvSimpleWriteMember[] members)
+    {
+        public CsvSimpleWriteMember[] Members { get; } = members;
+    }
+
+    private abstract class CsvAsyncSimpleWriteAccessor<TRecord>
+    {
+        public abstract ValueTask WriteAsync(CsvWriter writer, TRecord record, CancellationToken cancellationToken);
+    }
+
+    private sealed class CsvAsyncSimpleWriteAccessor<TRecord, TProperty>(
+        Func<TRecord, TProperty> getter,
+        Func<CsvWriter, TProperty, CsvTypeConverterOptions?, CancellationToken, ValueTask> writerDelegate,
+        CsvTypeConverterOptions? converterOptions)
+        : CsvAsyncSimpleWriteAccessor<TRecord>
+    {
+        public override ValueTask WriteAsync(CsvWriter writer, TRecord record, CancellationToken cancellationToken)
+        {
+            return writerDelegate(writer, getter(record), converterOptions, cancellationToken);
+        }
     }
 }

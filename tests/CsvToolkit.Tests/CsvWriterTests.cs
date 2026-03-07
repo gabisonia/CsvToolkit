@@ -1,5 +1,6 @@
 using CsvToolkit.Core.Mapping;
 using CsvToolkit.Core.TypeConversion;
+using System.Globalization;
 
 namespace CsvToolkit.Core.Tests;
 
@@ -256,6 +257,32 @@ public sealed class CsvWriterTests
     }
 
     [Fact]
+    public void WriteRecord_BuiltInTypes_UsesFastPathWithoutChangingOutput()
+    {
+        // Arrange
+        var options = new CsvOptions
+        {
+            NewLine = "\n",
+            CultureInfo = CultureInfo.InvariantCulture
+        };
+        using var text = new StringWriter();
+        using var writer = new CsvWriter(text, options);
+
+        // Act
+        writer.WriteRecord(new BuiltInWriteRecord
+        {
+            Id = 1,
+            Amount = 12.5m,
+            Enabled = true,
+            Name = "Ada"
+        });
+        var result = text.ToString();
+
+        // Assert
+        Assert.Equal("1,12.5,True,Ada\n", result);
+    }
+
+    [Fact]
     public async Task StreamWriteAndReadAsync_RoundTrips()
     {
         // Arrange
@@ -444,6 +471,35 @@ public sealed class CsvWriterTests
     }
 
     [Fact]
+    public void WriteRecord_ConverterOptionsFastPath_PreservesOutput()
+    {
+        // Arrange
+        var options = new CsvOptions
+        {
+            NewLine = "\n",
+            CultureInfo = CultureInfo.InvariantCulture
+        };
+        options.ConverterOptions.Configure<bool>(o => o.AddTrueValues("Y").AddFalseValues("N"));
+        options.ConverterOptions.Configure<DateTime>(o => o.AddFormats("dd-MM-yyyy"));
+        options.ConverterOptions.Configure<int?>(o => o.AddNullValues("NULL"));
+        using var text = new StringWriter();
+        using var writer = new CsvWriter(text, options);
+
+        // Act
+        writer.WriteRecord(new ConverterOptionsFastPathWriteRecord
+        {
+            Id = 7,
+            Flag = true,
+            Created = new DateTime(2025, 12, 31),
+            Score = null
+        });
+        var csv = text.ToString();
+
+        // Assert
+        Assert.Equal("7,Y,31-12-2025,NULL\n", csv);
+    }
+
+    [Fact]
     public void WriteRecord_UsesConfiguredNullValueToken()
     {
         // Arrange
@@ -549,6 +605,17 @@ public sealed class CsvWriterTests
         public string Notes { get; set; } = string.Empty;
     }
 
+    private sealed class BuiltInWriteRecord
+    {
+        public int Id { get; set; }
+
+        public decimal Amount { get; set; }
+
+        public bool Enabled { get; set; }
+
+        public string Name { get; set; } = string.Empty;
+    }
+
     private static async IAsyncEnumerable<WriteRecord> GetAsyncRecords()
     {
         yield return new WriteRecord { Id = 1, Name = "Ada", Notes = "N1" };
@@ -568,6 +635,17 @@ public sealed class CsvWriterTests
     private sealed class NullTokenWriteRecord
     {
         public string? Value { get; set; }
+    }
+
+    private sealed class ConverterOptionsFastPathWriteRecord
+    {
+        public int Id { get; set; }
+
+        public bool Flag { get; set; }
+
+        public DateTime Created { get; set; }
+
+        public int? Score { get; set; }
     }
 
     private sealed class AttributeConverterOptionsWriteRecord
