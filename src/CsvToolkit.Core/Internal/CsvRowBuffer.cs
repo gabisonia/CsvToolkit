@@ -21,6 +21,8 @@ internal sealed class CsvRowBuffer(int initialCharCapacity) : IDisposable
 
     public void Append(char value) => _chars.Append(value);
 
+    public void Append(ReadOnlySpan<char> value) => _chars.Append(value);
+
     public void CompleteField(bool wasQuoted, CsvTrimOptions trimOptions)
     {
         // Trimming is represented by offset/length metadata so we avoid copying field data.

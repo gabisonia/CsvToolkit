@@ -53,6 +53,11 @@ internal sealed class CsvParser(ICsvCharInput input, CsvOptions options) : IDisp
     private bool TryReadRowCore()
     {
         EnsureDelimiterResolved();
+        if (_activeDelimiter.Length == 1)
+        {
+            return TryReadRowCoreSingleDelimiter(_activeDelimiter[0]);
+        }
+
         _rowBuffer.Reset();
 
         var delimiter = _activeDelimiter;
@@ -246,9 +251,362 @@ internal sealed class CsvParser(ICsvCharInput input, CsvOptions options) : IDisp
         }
     }
 
+    private bool TryReadRowCoreSingleDelimiter(char delimiter)
+    {
+        _rowBuffer.Reset();
+
+        var quote = options.Quote;
+        var escape = options.Escape;
+        var trimOptions = options.TrimOptions;
+        var ignoreBlankLines = options.IgnoreBlankLines;
+        var trimStartEnabled = (trimOptions & CsvTrimOptions.TrimStart) != 0;
+        var hasDistinctEscape = escape != quote;
+
+        var inQuotes = false;
+        var afterClosingQuote = false;
+        var fieldWasQuoted = false;
+        var consumedAnything = false;
+        var rowStartLine = LineNumber;
+
+        while (true)
+        {
+            if (_pushbackCount == 0 && TryProcessBufferedSingleDelimiterCharacters(
+                    delimiter,
+                    quote,
+                    escape,
+                    trimStartEnabled,
+                    hasDistinctEscape,
+                    ref inQuotes,
+                    ref afterClosingQuote,
+                    ref consumedAnything,
+                    out var bufferedCharacter))
+            {
+                var bufferedCh = bufferedCharacter;
+
+                if (inQuotes)
+                {
+                    if (hasDistinctEscape && bufferedCh == escape)
+                    {
+                        var escaped = ReadChar();
+
+                        if (escaped == quote)
+                        {
+                            _rowBuffer.Append(quote);
+                            continue;
+                        }
+
+                        if (escaped >= 0)
+                        {
+                            PushBack(escaped);
+                        }
+
+                        _rowBuffer.Append(bufferedCh);
+                        continue;
+                    }
+
+                    if (bufferedCh == quote)
+                    {
+                        var next = ReadChar();
+
+                        if (next == quote)
+                        {
+                            _rowBuffer.Append(quote);
+                            continue;
+                        }
+
+                        inQuotes = false;
+                        afterClosingQuote = true;
+
+                        if (next >= 0)
+                        {
+                            PushBack(next);
+                        }
+
+                        continue;
+                    }
+
+                    if (TryAppendQuotedNewLine(bufferedCh))
+                    {
+                        continue;
+                    }
+
+                    _rowBuffer.Append(bufferedCh);
+                    continue;
+                }
+
+                if (afterClosingQuote)
+                {
+                    if (bufferedCh == delimiter)
+                    {
+                        _rowBuffer.CompleteField(true, trimOptions);
+                        fieldWasQuoted = false;
+                        afterClosingQuote = false;
+                        continue;
+                    }
+
+                    if (bufferedCh == '\r' || bufferedCh == '\n')
+                    {
+                        ConsumeNewLineSuffix(bufferedCh);
+                        _rowBuffer.CompleteField(true, trimOptions);
+                        if (ignoreBlankLines && _rowBuffer.IsBlankLine())
+                        {
+                            ResetRowState(ref consumedAnything, ref inQuotes, ref afterClosingQuote, ref fieldWasQuoted);
+                            rowStartLine = LineNumber;
+                            continue;
+                        }
+
+                        CurrentRow = _rowBuffer.ToRow(RowIndex, rowStartLine);
+                        RowIndex++;
+                        return true;
+                    }
+
+                    if (char.IsWhiteSpace(bufferedCh))
+                    {
+                        continue;
+                    }
+
+                    HandleBadData(
+                        _rowBuffer.FieldCount,
+                        "Unexpected character after closing quote.",
+                        _rowBuffer.CurrentFieldMemory);
+
+                    afterClosingQuote = false;
+                    _rowBuffer.Append(bufferedCh);
+                    continue;
+                }
+
+                if (bufferedCh == delimiter)
+                {
+                    _rowBuffer.CompleteField(fieldWasQuoted, trimOptions);
+                    fieldWasQuoted = false;
+                    continue;
+                }
+
+                if (bufferedCh == quote)
+                {
+                    if (_rowBuffer.CurrentFieldLength == 0)
+                    {
+                        inQuotes = true;
+                        fieldWasQuoted = true;
+                        continue;
+                    }
+
+                    HandleBadData(
+                        _rowBuffer.FieldCount,
+                        "Unexpected quote in unquoted field.",
+                        _rowBuffer.CurrentFieldMemory);
+
+                    _rowBuffer.Append(bufferedCh);
+                    continue;
+                }
+
+                if (bufferedCh == '\r' || bufferedCh == '\n')
+                {
+                    ConsumeNewLineSuffix(bufferedCh);
+                    _rowBuffer.CompleteField(fieldWasQuoted, trimOptions);
+                    if (ignoreBlankLines && _rowBuffer.IsBlankLine())
+                    {
+                        ResetRowState(ref consumedAnything, ref inQuotes, ref afterClosingQuote, ref fieldWasQuoted);
+                        rowStartLine = LineNumber;
+                        continue;
+                    }
+
+                    CurrentRow = _rowBuffer.ToRow(RowIndex, rowStartLine);
+                    RowIndex++;
+                    return true;
+                }
+
+                if (_rowBuffer.CurrentFieldLength == 0 && trimStartEnabled && char.IsWhiteSpace(bufferedCh))
+                {
+                    continue;
+                }
+
+                _rowBuffer.Append(bufferedCh);
+                continue;
+            }
+
+            var code = ReadChar();
+
+            if (code < 0)
+            {
+                if (!consumedAnything && _rowBuffer.FieldCount == 0 && _rowBuffer.CurrentFieldLength == 0)
+                {
+                    return false;
+                }
+
+                if (inQuotes)
+                {
+                    HandleBadData(
+                        _rowBuffer.FieldCount,
+                        "Unexpected end of file while inside a quoted field.",
+                        _rowBuffer.CurrentFieldMemory);
+                }
+
+                _rowBuffer.CompleteField(fieldWasQuoted, trimOptions);
+                if (ignoreBlankLines && _rowBuffer.IsBlankLine())
+                {
+                    return false;
+                }
+
+                CurrentRow = _rowBuffer.ToRow(RowIndex, rowStartLine);
+                RowIndex++;
+                return true;
+            }
+
+            consumedAnything = true;
+            var ch = (char)code;
+
+            if (inQuotes)
+            {
+                if (hasDistinctEscape && ch == escape)
+                {
+                    var escaped = ReadChar();
+
+                    if (escaped == quote)
+                    {
+                        _rowBuffer.Append(quote);
+                        continue;
+                    }
+
+                    if (escaped >= 0)
+                    {
+                        PushBack(escaped);
+                    }
+
+                    _rowBuffer.Append(ch);
+                    continue;
+                }
+
+                if (ch == quote)
+                {
+                    var next = ReadChar();
+
+                    if (next == quote)
+                    {
+                        _rowBuffer.Append(quote);
+                        continue;
+                    }
+
+                    inQuotes = false;
+                    afterClosingQuote = true;
+
+                    if (next >= 0)
+                    {
+                        PushBack(next);
+                    }
+
+                    continue;
+                }
+
+                if (TryAppendQuotedNewLine(ch))
+                {
+                    continue;
+                }
+
+                _rowBuffer.Append(ch);
+                continue;
+            }
+
+            if (afterClosingQuote)
+            {
+                if (ch == delimiter)
+                {
+                    _rowBuffer.CompleteField(true, trimOptions);
+                    fieldWasQuoted = false;
+                    afterClosingQuote = false;
+                    continue;
+                }
+
+                if (ch == '\r' || ch == '\n')
+                {
+                    ConsumeNewLineSuffix(ch);
+                    _rowBuffer.CompleteField(true, trimOptions);
+                    if (ignoreBlankLines && _rowBuffer.IsBlankLine())
+                    {
+                        ResetRowState(ref consumedAnything, ref inQuotes, ref afterClosingQuote, ref fieldWasQuoted);
+                        rowStartLine = LineNumber;
+                        continue;
+                    }
+
+                    CurrentRow = _rowBuffer.ToRow(RowIndex, rowStartLine);
+                    RowIndex++;
+                    return true;
+                }
+
+                if (char.IsWhiteSpace(ch))
+                {
+                    continue;
+                }
+
+                HandleBadData(
+                    _rowBuffer.FieldCount,
+                    "Unexpected character after closing quote.",
+                    _rowBuffer.CurrentFieldMemory);
+
+                afterClosingQuote = false;
+                _rowBuffer.Append(ch);
+                continue;
+            }
+
+            if (ch == delimiter)
+            {
+                _rowBuffer.CompleteField(fieldWasQuoted, trimOptions);
+                fieldWasQuoted = false;
+                continue;
+            }
+
+            if (ch == quote)
+            {
+                if (_rowBuffer.CurrentFieldLength == 0)
+                {
+                    inQuotes = true;
+                    fieldWasQuoted = true;
+                    continue;
+                }
+
+                HandleBadData(
+                    _rowBuffer.FieldCount,
+                    "Unexpected quote in unquoted field.",
+                    _rowBuffer.CurrentFieldMemory);
+
+                _rowBuffer.Append(ch);
+                continue;
+            }
+
+            if (ch == '\r' || ch == '\n')
+            {
+                ConsumeNewLineSuffix(ch);
+                _rowBuffer.CompleteField(fieldWasQuoted, trimOptions);
+                if (ignoreBlankLines && _rowBuffer.IsBlankLine())
+                {
+                    ResetRowState(ref consumedAnything, ref inQuotes, ref afterClosingQuote, ref fieldWasQuoted);
+                    rowStartLine = LineNumber;
+                    continue;
+                }
+
+                CurrentRow = _rowBuffer.ToRow(RowIndex, rowStartLine);
+                RowIndex++;
+                return true;
+            }
+
+            if (_rowBuffer.CurrentFieldLength == 0 && trimStartEnabled && char.IsWhiteSpace(ch))
+            {
+                continue;
+            }
+
+            _rowBuffer.Append(ch);
+        }
+    }
+
     private async ValueTask<bool> TryReadRowCoreAsync(CancellationToken cancellationToken)
     {
         await EnsureDelimiterResolvedAsync(cancellationToken).ConfigureAwait(false);
+        if (_activeDelimiter.Length == 1)
+        {
+            return await TryReadRowCoreSingleDelimiterAsync(_activeDelimiter[0], cancellationToken)
+                .ConfigureAwait(false);
+        }
+
         _rowBuffer.Reset();
 
         var delimiter = _activeDelimiter;
@@ -395,6 +753,198 @@ internal sealed class CsvParser(ICsvCharInput input, CsvOptions options) : IDisp
 
             if (await TryConsumeDelimiterAsync(ch, delimiter, delimiterFirst, delimiterLength, cancellationToken)
                     .ConfigureAwait(false))
+            {
+                _rowBuffer.CompleteField(fieldWasQuoted, trimOptions);
+                fieldWasQuoted = false;
+                continue;
+            }
+
+            if (ch == quote)
+            {
+                if (_rowBuffer.CurrentFieldLength == 0)
+                {
+                    inQuotes = true;
+                    fieldWasQuoted = true;
+                    continue;
+                }
+
+                HandleBadData(
+                    _rowBuffer.FieldCount,
+                    "Unexpected quote in unquoted field.",
+                    _rowBuffer.CurrentFieldMemory);
+
+                _rowBuffer.Append(ch);
+                continue;
+            }
+
+            if (ch == '\r' || ch == '\n')
+            {
+                await ConsumeNewLineSuffixAsync(ch, cancellationToken).ConfigureAwait(false);
+                _rowBuffer.CompleteField(fieldWasQuoted, trimOptions);
+                if (ignoreBlankLines && _rowBuffer.IsBlankLine())
+                {
+                    ResetRowState(ref consumedAnything, ref inQuotes, ref afterClosingQuote, ref fieldWasQuoted);
+                    rowStartLine = LineNumber;
+                    continue;
+                }
+
+                CurrentRow = _rowBuffer.ToRow(RowIndex, rowStartLine);
+                RowIndex++;
+                return true;
+            }
+
+            if (_rowBuffer.CurrentFieldLength == 0 && trimStartEnabled && char.IsWhiteSpace(ch))
+            {
+                continue;
+            }
+
+            _rowBuffer.Append(ch);
+        }
+    }
+
+    private async ValueTask<bool> TryReadRowCoreSingleDelimiterAsync(char delimiter, CancellationToken cancellationToken)
+    {
+        _rowBuffer.Reset();
+
+        var quote = options.Quote;
+        var escape = options.Escape;
+        var trimOptions = options.TrimOptions;
+        var ignoreBlankLines = options.IgnoreBlankLines;
+        var trimStartEnabled = (trimOptions & CsvTrimOptions.TrimStart) != 0;
+        var hasDistinctEscape = escape != quote;
+
+        var inQuotes = false;
+        var afterClosingQuote = false;
+        var fieldWasQuoted = false;
+        var consumedAnything = false;
+        var rowStartLine = LineNumber;
+
+        while (true)
+        {
+            var code = await ReadCharAsync(cancellationToken).ConfigureAwait(false);
+
+            if (code < 0)
+            {
+                if (!consumedAnything && _rowBuffer.FieldCount == 0 && _rowBuffer.CurrentFieldLength == 0)
+                {
+                    return false;
+                }
+
+                if (inQuotes)
+                {
+                    HandleBadData(
+                        _rowBuffer.FieldCount,
+                        "Unexpected end of file while inside a quoted field.",
+                        _rowBuffer.CurrentFieldMemory);
+                }
+
+                _rowBuffer.CompleteField(fieldWasQuoted, trimOptions);
+                if (ignoreBlankLines && _rowBuffer.IsBlankLine())
+                {
+                    return false;
+                }
+
+                CurrentRow = _rowBuffer.ToRow(RowIndex, rowStartLine);
+                RowIndex++;
+                return true;
+            }
+
+            consumedAnything = true;
+            var ch = (char)code;
+
+            if (inQuotes)
+            {
+                if (hasDistinctEscape && ch == escape)
+                {
+                    var escaped = await ReadCharAsync(cancellationToken).ConfigureAwait(false);
+
+                    if (escaped == quote)
+                    {
+                        _rowBuffer.Append(quote);
+                        continue;
+                    }
+
+                    if (escaped >= 0)
+                    {
+                        PushBack(escaped);
+                    }
+
+                    _rowBuffer.Append(ch);
+                    continue;
+                }
+
+                if (ch == quote)
+                {
+                    var next = await ReadCharAsync(cancellationToken).ConfigureAwait(false);
+
+                    if (next == quote)
+                    {
+                        _rowBuffer.Append(quote);
+                        continue;
+                    }
+
+                    inQuotes = false;
+                    afterClosingQuote = true;
+
+                    if (next >= 0)
+                    {
+                        PushBack(next);
+                    }
+
+                    continue;
+                }
+
+                if (await TryAppendQuotedNewLineAsync(ch, cancellationToken).ConfigureAwait(false))
+                {
+                    continue;
+                }
+
+                _rowBuffer.Append(ch);
+                continue;
+            }
+
+            if (afterClosingQuote)
+            {
+                if (ch == delimiter)
+                {
+                    _rowBuffer.CompleteField(true, trimOptions);
+                    fieldWasQuoted = false;
+                    afterClosingQuote = false;
+                    continue;
+                }
+
+                if (ch == '\r' || ch == '\n')
+                {
+                    await ConsumeNewLineSuffixAsync(ch, cancellationToken).ConfigureAwait(false);
+                    _rowBuffer.CompleteField(true, trimOptions);
+                    if (ignoreBlankLines && _rowBuffer.IsBlankLine())
+                    {
+                        ResetRowState(ref consumedAnything, ref inQuotes, ref afterClosingQuote, ref fieldWasQuoted);
+                        rowStartLine = LineNumber;
+                        continue;
+                    }
+
+                    CurrentRow = _rowBuffer.ToRow(RowIndex, rowStartLine);
+                    RowIndex++;
+                    return true;
+                }
+
+                if (char.IsWhiteSpace(ch))
+                {
+                    continue;
+                }
+
+                HandleBadData(
+                    _rowBuffer.FieldCount,
+                    "Unexpected character after closing quote.",
+                    _rowBuffer.CurrentFieldMemory);
+
+                afterClosingQuote = false;
+                _rowBuffer.Append(ch);
+                continue;
+            }
+
+            if (ch == delimiter)
             {
                 _rowBuffer.CompleteField(fieldWasQuoted, trimOptions);
                 fieldWasQuoted = false;
@@ -635,6 +1185,111 @@ internal sealed class CsvParser(ICsvCharInput input, CsvOptions options) : IDisp
         return true;
     }
 
+    private bool TryProcessBufferedSingleDelimiterCharacters(
+        char delimiter,
+        char quote,
+        char escape,
+        bool trimStartEnabled,
+        bool hasDistinctEscape,
+        ref bool inQuotes,
+        ref bool afterClosingQuote,
+        ref bool consumedAnything,
+        out char character)
+    {
+        character = default;
+
+        while (_readPosition < _readLength)
+        {
+            var remaining = _readBuffer.AsSpan(_readPosition, _readLength - _readPosition);
+
+            if (inQuotes)
+            {
+                var specialIndex = FindQuotedSpecialCharacterIndex(remaining, quote, escape, hasDistinctEscape);
+                if (specialIndex < 0)
+                {
+                    _rowBuffer.Append(remaining);
+                    _readPosition = _readLength;
+                    consumedAnything = true;
+                    return false;
+                }
+
+                if (specialIndex > 0)
+                {
+                    _rowBuffer.Append(remaining[..specialIndex]);
+                    _readPosition += specialIndex;
+                    consumedAnything = true;
+                    remaining = remaining[specialIndex..];
+                }
+
+                character = remaining[0];
+                _readPosition++;
+                consumedAnything = true;
+                return true;
+            }
+
+            if (afterClosingQuote)
+            {
+                var skippedWhitespace = CountSkippableWhitespace(remaining);
+                if (skippedWhitespace > 0)
+                {
+                    _readPosition += skippedWhitespace;
+                    consumedAnything = true;
+                    if (_readPosition >= _readLength)
+                    {
+                        return false;
+                    }
+
+                    remaining = _readBuffer.AsSpan(_readPosition, _readLength - _readPosition);
+                }
+
+                character = remaining[0];
+                _readPosition++;
+                consumedAnything = true;
+                return true;
+            }
+
+            if (_rowBuffer.CurrentFieldLength == 0 && trimStartEnabled)
+            {
+                var skippedWhitespace = CountSkippableWhitespace(remaining);
+                if (skippedWhitespace > 0)
+                {
+                    _readPosition += skippedWhitespace;
+                    consumedAnything = true;
+                    if (_readPosition >= _readLength)
+                    {
+                        return false;
+                    }
+
+                    remaining = _readBuffer.AsSpan(_readPosition, _readLength - _readPosition);
+                }
+            }
+
+            var delimiterIndex = FindUnquotedSpecialCharacterIndex(remaining, delimiter, quote);
+            if (delimiterIndex < 0)
+            {
+                _rowBuffer.Append(remaining);
+                _readPosition = _readLength;
+                consumedAnything = true;
+                return false;
+            }
+
+            if (delimiterIndex > 0)
+            {
+                _rowBuffer.Append(remaining[..delimiterIndex]);
+                _readPosition += delimiterIndex;
+                consumedAnything = true;
+                remaining = remaining[delimiterIndex..];
+            }
+
+            character = remaining[0];
+            _readPosition++;
+            consumedAnything = true;
+            return true;
+        }
+
+        return false;
+    }
+
     private bool TryConsumeDelimiter(char current, string delimiter, char delimiterFirst, int delimiterLength)
     {
         if (current != delimiterFirst)
@@ -775,6 +1430,58 @@ internal sealed class CsvParser(ICsvCharInput input, CsvOptions options) : IDisp
         }
 
         return false;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static int FindUnquotedSpecialCharacterIndex(ReadOnlySpan<char> source, char delimiter, char quote)
+    {
+        for (var i = 0; i < source.Length; i++)
+        {
+            var ch = source[i];
+            if (ch == delimiter || ch == quote || ch == '\r' || ch == '\n')
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static int FindQuotedSpecialCharacterIndex(
+        ReadOnlySpan<char> source,
+        char quote,
+        char escape,
+        bool hasDistinctEscape)
+    {
+        for (var i = 0; i < source.Length; i++)
+        {
+            var ch = source[i];
+            if (ch == quote || ch == '\r' || ch == '\n' || (hasDistinctEscape && ch == escape))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static int CountSkippableWhitespace(ReadOnlySpan<char> source)
+    {
+        var count = 0;
+        while (count < source.Length)
+        {
+            var ch = source[count];
+            if (ch == '\r' || ch == '\n' || !char.IsWhiteSpace(ch))
+            {
+                break;
+            }
+
+            count++;
+        }
+
+        return count;
     }
 
     private async ValueTask<bool> TryAppendQuotedNewLineAsync(char ch, CancellationToken cancellationToken)

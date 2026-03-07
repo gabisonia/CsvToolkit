@@ -188,6 +188,29 @@ public sealed class CsvReaderParsingTests
     }
 
     [Fact]
+    public async Task ReadAsync_SingleCharacterDelimiter_PreservesQuotedFieldsAndBlankLineSkipping()
+    {
+        // Arrange
+        const string csv = "id,name\n1,\"Ada,Lovelace\"\n\n2,Bob\n";
+        var options = new CsvOptions { IgnoreBlankLines = true };
+        using var reader = new CsvReader(new StringReader(csv), options);
+
+        // Act
+        var firstRead = await reader.ReadAsync();
+        var firstName = reader.GetField(1);
+        var secondRead = await reader.ReadAsync();
+        var secondName = reader.GetField(1);
+        var eofRead = await reader.ReadAsync();
+
+        // Assert
+        Assert.True(firstRead);
+        Assert.Equal("Ada,Lovelace", firstName);
+        Assert.True(secondRead);
+        Assert.Equal("Bob", secondName);
+        Assert.False(eofRead);
+    }
+
+    [Fact]
     public void TrimOptions_TrimStartAndEnd()
     {
         // Arrange
@@ -312,6 +335,37 @@ public sealed class CsvReaderParsingTests
         Assert.True(secondRead);
         Assert.Equal("Bob", secondName);
         Assert.False(eofRead);
+    }
+
+    [Fact]
+    public void TryReadRow_SingleCharacterDelimiter_AcceptsWhitespaceAfterClosingQuote()
+    {
+        // Arrange
+        const string csv = "id,name\n1,\"Ada\"  \n";
+        using var reader = new CsvReader(new StringReader(csv));
+
+        // Act
+        var read = reader.TryReadRow(out var row);
+
+        // Assert
+        Assert.True(read);
+        Assert.Equal("Ada", row.GetFieldString(1));
+    }
+
+    [Fact]
+    public void TryReadRow_SingleCharacterDelimiter_TrimStart_AllowsQuotedFieldsAfterLeadingWhitespace()
+    {
+        // Arrange
+        const string csv = "id,name\n1,   \"Ada\"\n";
+        var options = new CsvOptions { TrimOptions = CsvTrimOptions.TrimStart };
+        using var reader = new CsvReader(new StringReader(csv), options);
+
+        // Act
+        var read = reader.TryReadRow(out var row);
+
+        // Assert
+        Assert.True(read);
+        Assert.Equal("Ada", row.GetFieldString(1));
     }
 
     [Fact]

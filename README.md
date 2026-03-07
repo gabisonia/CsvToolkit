@@ -13,7 +13,7 @@
 
 ## Benchmark Note
 
-[`Sep`](https://github.com/nietras/Sep) is currently faster in the latest cross-library benchmark run. If your main KPI is "make CSV go brrr at irresponsible speed," you should absolutely check out [`Sep`](https://github.com/nietras/Sep). `CsvToolkit.Core` is still in the gym, lifting allocations off the hot path while keeping a higher-level typed API and broader feature coverage.
+[`Sep`](https://github.com/nietras/Sep) is still faster in the latest benchmark runs, but the read-path gap narrowed materially after the latest parser optimization. In the focused `100k`-row rerun, `CsvToolkit.Core` typed read improved from about `42.5 ms` to `31.4 ms`, while semicolon/high-quote read improved from about `40.8 ms` to `33.3 ms`. If your main KPI is raw CSV throughput above all else, [`Sep`](https://github.com/nietras/Sep) remains the speed ceiling; `CsvToolkit.Core` is closing the gap while keeping a higher-level typed API and broader feature coverage.
 
 ## NuGet
 
@@ -247,6 +247,40 @@ Machine: `Apple M3 Pro` (`11` logical / `11` physical cores)
 OS: `macOS Tahoe 26.3 (25D125) [Darwin 25.3.0]`  
 Runtime: `.NET 10.0.0`  
 Command: `dotnet run -c Release --project benchmarks/CsvToolkit.Benchmarks -- --filter "*CsvReadWriteBenchmarks*"`
+
+### Focused Read Rerun After Parser Optimization
+
+Run date: `2026-03-07`  
+Machine: `Apple M3 Pro` (`11` logical / `11` physical cores)  
+OS: `macOS Tahoe 26.3 (25D125) [Darwin 25.3.0]`  
+Runtime: `.NET 10.0.0`  
+Command:
+
+```bash
+dotnet run -c Release --project benchmarks/CsvToolkit.Benchmarks -- --filter \
+  "*CsvReadWriteBenchmarks.CsvToolkitCore_ReadTyped_Stream*" \
+  "*CsvReadWriteBenchmarks.Sep_ReadTyped_Stream*" \
+  "*CsvReadWriteBenchmarks.CsvToolkitCore_ReadTyped_SemicolonHighQuote*" \
+  "*CsvReadWriteBenchmarks.Sep_ReadTyped_SemicolonHighQuote*"
+```
+
+This rerun reflects the latest single-character delimiter parser fast path in `CsvParser`.
+
+| Scenario | RowCount | CsvToolkit.Core (Mean / Alloc) | Sep (Mean / Alloc) | Time Winner | Allocation Winner |
+|--------- |---------:|-------------------------------:|-------------------:|------------:|------------------:|
+| ReadTyped | 10,000 | 3.580 ms / 0.99 MB | 2.080 ms / 0.92 MB | Sep (`1.72x`) | Sep (`1.08x` lower) |
+| ReadTyped_SemicolonHighQuote | 10,000 | 3.640 ms / 0.99 MB | 2.284 ms / 0.92 MB | Sep (`1.59x`) | Sep (`1.08x` lower) |
+| ReadTyped | 100,000 | 31.366 ms / 9.30 MB | 21.489 ms / 9.23 MB | Sep (`1.46x`) | Sep (`1.01x` lower) |
+| ReadTyped_SemicolonHighQuote | 100,000 | 33.270 ms / 9.30 MB | 23.560 ms / 9.23 MB | Sep (`1.41x`) | Sep (`1.01x` lower) |
+
+Observed change from the previous tracked `2026-03-07` full benchmark snapshot:
+- `CsvToolkit.Core` `ReadTyped` improved by about `22.6%` at `10k` rows and about `26.1%` at `100k` rows.
+- `CsvToolkit.Core` `ReadTyped_SemicolonHighQuote` improved by about `15.5%` at `10k` rows and about `18.5%` at `100k` rows.
+- Read allocations stayed effectively flat, which indicates the improvement came from parser CPU work rather than allocation changes.
+
+### Full Cross-Library Snapshot
+
+The table below is the latest full benchmark run across all benchmark cases. Its read-path numbers predate the focused parser rerun above.
 
 Common scenarios benchmarked across all three libraries:
 
